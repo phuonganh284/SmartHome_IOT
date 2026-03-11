@@ -53,3 +53,22 @@ export const login = async (req, res) => {
         session: data.session
     });
 };
+
+// get profile
+export const getProfile = async (req, res) => {
+    const userId = req.user.id;
+
+    const { data, error } = await supabase
+        .from("users")
+        .select("name, email")
+        .eq("id", userId)
+        .single();
+
+    if (error) {
+        return res.status(400).json({ error: error.message });
+    }
+
+    res.json({
+        profile: data
+    });
+};

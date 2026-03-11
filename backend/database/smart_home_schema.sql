@@ -22,13 +22,28 @@ create table devices (
     id uuid primary key default gen_random_uuid(),
     user_id uuid references users(id) on delete cascade,
     name varchar(255),
-    type varchar(100),
-    status varchar(50) default 'off', -- Current state: 'on', 'off'
+    type varchar(100), 
+    status varchar(50) default 'off', -- current state: 'on', 'off'
     adafruit_key varchar(255),
     image text,
     created_at timestamp default now()
 );
 
+create table lights (
+    device_id uuid primary key references devices(id) on delete cascade,
+    tone varchar(10),          -- warm / cold
+    intensity int check (intensity between 0 and 100),
+    color varchar(20)          -- red, green, blue, white 
+);
+
+
+create table fans (
+    device_id uuid primary key references devices(id) on delete cascade,
+    speed_level int check (speed_level between 0 and 3),
+    oscillation boolean default false,
+    direction varchar(10), -- forward / reverse
+    timer_minutes int
+);
 
 -- TABLE: sensors
 -- Mỗi device có thể có nhiều cảm biến (nhiệt độ, độ ẩm, ánh sáng...)

@@ -4,6 +4,7 @@ import cors from "cors";
 
 import authRoutes from "./src/routes/authRoutes.js";
 import deviceRoutes from "./src/routes/deviceRoutes.js";
+import userRoutes from "./src/routes/userRoutes.js";
 
 dotenv.config();
 
@@ -14,6 +15,8 @@ app.use(express.json());
 
 app.use("/api/auth", authRoutes);
 app.use("/api", deviceRoutes);
+app.use("/api/user", userRoutes);
+
 
 app.get("/", (req, res) => {
     res.send("Smart Home IoT Backend Running");

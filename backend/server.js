@@ -1,27 +1,26 @@
-const express = require("express");
-const { createClient } = require("@supabase/supabase-js");
-require("dotenv").config();
+import express from "express";
+import dotenv from "dotenv";
+import cors from "cors";
+
+import authRoutes from "./src/routes/authRoutes.js";
+import deviceRoutes from "./src/routes/deviceRoutes.js";
+
+dotenv.config();
 
 const app = express();
+
+app.use(cors());
 app.use(express.json());
 
-const supabase = createClient(
-    process.env.SUPABASE_URL,
-    process.env.SUPABASE_KEY
-);
+app.use("/api/auth", authRoutes);
+app.use("/api", deviceRoutes);
 
 app.get("/", (req, res) => {
-    res.send("Backend running");
+    res.send("Smart Home IoT Backend Running");
 });
 
-app.get("/sensors", async (req, res) => {
-    const { data, error } = await supabase
-        .from("sensor_data")
-        .select("*");
+const PORT = process.env.PORT || 3000;
 
-    res.json(data);
-});
-
-app.listen(3000, () => {
-    console.log("Server running on port 3000");
+app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
 });

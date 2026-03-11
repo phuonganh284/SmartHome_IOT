@@ -1,7 +1,5 @@
 # SmartHome_IOT — Folder Structure
 
-Below is a concise ASCII tree of the repository root:
-
 smartHome_IOT/
 ├─ backend/
 │  ├─ package.json
@@ -24,4 +22,3 @@ smartHome_IOT/
 └─ gateway/
    └─ main.py
 
-If you'd like, I can expand any folder into a detailed list or add this tree to the README.

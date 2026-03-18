@@ -9,83 +9,100 @@ create extension if not exists "pgcrypto";
 -- TABLE: users
 -- Lưu thông tin tài khoản người dùng (email và tên)
 create table users (
-    id uuid primary key default gen_random_uuid(),
+    id uuid primary key,
     email varchar(255) unique not null,
     name varchar(255) not null,
     created_at timestamp default now()
 );
 
+-- DEVICE TYPES
+create table device_types (
+    type varchar primary key,     
+    display_name varchar,        
+    base_type varchar,
+    image text
+);
 
--- TABLE: devices
--- Lưu các thiết bị trong nhà (đèn, quạt, cảm biến...) thuộc về user
+-- DEVICES
 create table devices (
-    id uuid primary key default gen_random_uuid(),
+    id bigint generated always as identity primary key,
     user_id uuid references users(id) on delete cascade,
     name varchar(255),
     type varchar(100), 
-    status varchar(50) default 'off', -- current state: 'on', 'off'
+    status varchar(50) default 'off',
     adafruit_key varchar(255),
     image text,
     created_at timestamp default now()
 );
 
+-- LIGHTS
 create table lights (
-    device_id uuid primary key references devices(id) on delete cascade,
-    tone varchar(10),          -- warm / cold
+    device_id bigint primary key references devices(id) on delete cascade,
     intensity int check (intensity between 0 and 100),
-    color varchar(20)          -- red, green, blue, white 
+    color varchar(20)
 );
 
-
+-- FANS
 create table fans (
-    device_id uuid primary key references devices(id) on delete cascade,
-    speed_level int check (speed_level between 0 and 3),
-    oscillation boolean default false,
-    direction varchar(10), -- forward / reverse
-    timer_minutes int
+    device_id bigint primary key references devices(id) on delete cascade,
+    speed_level int check (speed_level between 0 and 100),
+    mode text default 'auto' --"low", "medium", "high", "auto"
+
 );
 
--- TABLE: sensors
--- Mỗi device có thể có nhiều cảm biến (nhiệt độ, độ ẩm, ánh sáng...)
+-- SENSORS
 create table sensors (
-    id uuid primary key default gen_random_uuid(),
-    device_id uuid references devices(id) on delete cascade,
+    id bigint generated always as identity primary key,
+    sensor_type varchar(100) unique not null,
     name varchar(255),
-    sensor_type varchar(100), -- 'temperature', 'light'
     adafruit_key varchar(255),
     created_at timestamp default now()
 );
 
--- TABLE: sensor_readings
--- Lưu dữ liệu đo từ cảm biến theo thời gian (ví dụ mỗi 5 phút)
+-- SENSOR READINGS
 create table sensor_readings (
     id bigserial primary key,
-    sensor_id uuid references sensors(id) on delete cascade,
+    sensor_id bigint references sensors(id) on delete cascade,
     value float,
     created_at timestamp default now()
 );
 
-
--- TABLE: device_actions
--- Lưu lịch sử hoạt động của thiết bị (bật/tắt, thay đổi trạng thái...)
+-- DEVICE ACTIONS
 create table device_actions (
     id bigserial primary key,
-    device_id uuid references devices(id) on delete cascade,
+    device_id bigint references devices(id) on delete cascade,
     action varchar(100),
     value varchar(100),
     created_at timestamp default now()
 );
 
-
--- TABLE: automation_rules
--- Lưu các rule tự động điều khiển thiết bị dựa trên dữ liệu cảm biến
+-- AUTOMATION RULES
 create table automation_rules (
-    id uuid primary key default gen_random_uuid(),
+    id bigint generated always as identity primary key,
     user_id uuid references users(id) on delete cascade,
-    sensor_id uuid references sensors(id),
-    target_device_id uuid references devices(id),
+    sensor_id bigint references sensors(id),
+    target_device_id bigint references devices(id),
     condition varchar(20),
     threshold float,
     action varchar(100),
     created_at timestamp default now()
 );
+
+-- TRIGGER/PROCEDURE
+create function handle_new_user()
+returns trigger as $$
+begin
+  insert into public.users (id, email, name)
+  values (
+    new.id,
+    new.email,
+    new.raw_user_meta_data->>'name'
+  );
+  return new;
+end;
+$$ language plpgsql;
+
+create trigger on_auth_user_created
+after insert on auth.users
+for each row execute procedure handle_new_user();
+

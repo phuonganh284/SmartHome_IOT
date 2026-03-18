@@ -3,8 +3,11 @@ import dotenv from "dotenv";
 import cors from "cors";
 
 import authRoutes from "./src/routes/authRoutes.js";
+import profileRoutes from "./src/routes/profileRoutes.js";
+
 import deviceRoutes from "./src/routes/deviceRoutes.js";
-import userRoutes from "./src/routes/userRoutes.js";
+import lightRoutes from "./src/routes/lightRoutes.js";
+import fanRoutes from "./src/routes/fanRoutes.js";
 
 dotenv.config();
 
@@ -14,9 +17,11 @@ app.use(cors());
 app.use(express.json());
 
 app.use("/api/auth", authRoutes);
-app.use("/api", deviceRoutes);
-app.use("/api/user", userRoutes);
+app.use("/api/user", profileRoutes);
 
+app.use("/api", deviceRoutes);
+app.use("/api", lightRoutes);
+app.use("/api", fanRoutes);
 
 app.get("/", (req, res) => {
     res.send("Smart Home IoT Backend Running");

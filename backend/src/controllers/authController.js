@@ -7,27 +7,18 @@ export const register = async (req, res) => {
     // create auth user in Supabase Auth
     const { data, error } = await supabase.auth.signUp({
         email,
-        password
+        password,
+        options: {
+            data: {
+                name: name
+            }
+        }
     });
 
     if (error) {
         return res.status(400).json({ error: error.message });
     }
 
-    // create profile in public.users table
-    const { error: insertError } = await supabase
-        .from("users")
-        .insert([
-            {
-                id: data.user.id,
-                name: name,
-                email: email
-            }
-        ]);
-
-    if (insertError) {
-        return res.status(500).json({ error: insertError.message });
-    }
 
     res.json({
         message: "User registered",
@@ -54,21 +45,3 @@ export const login = async (req, res) => {
     });
 };
 
-// get profile
-export const getProfile = async (req, res) => {
-    const userId = req.user.id;
-
-    const { data, error } = await supabase
-        .from("users")
-        .select("name, email")
-        .eq("id", userId)
-        .single();
-
-    if (error) {
-        return res.status(400).json({ error: error.message });
-    }
-
-    res.json({
-        profile: data
-    });
-};

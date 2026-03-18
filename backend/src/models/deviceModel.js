@@ -1,15 +1,94 @@
 import supabase from "../services/supabaseClient.js";
 
-export const getDevicesByUser = async (userId) => {
-    const { data, error } = await supabase
-        .from("devices")
-        .select(`id, name, type, status, adafruit_key, image, created_at, sensors(*), lights(*), fans(*)`)
-        .eq("user_id", userId)
-        .order("created_at", { ascending: false });
+export const getDeviceTypes = async (db = supabase) => {
+    const { data, error } = await db
+        .from("device_types")
+        .select("type, display_name, image");
 
-    return { data, error };
+    if (error) throw error;
+    return data;
 };
 
-export default {
-    getDevicesByUser,
+export const createDevice = async ({ db = supabase, user_id, type, name = null, adafruit_key = null }) => {
+    // insert into devices, then into specific table depending on device_types.base_type
+    // get base_type
+    const { data: typeData, error: typeErr } = await db
+        .from("device_types")
+        .select("base_type")
+        .eq("type", type)
+        .limit(1)
+        .single();
+
+    if (typeErr) throw typeErr;
+
+    const { data: device, error: devErr } = await db
+        .from("devices")
+        .insert({ user_id, name, type, adafruit_key })
+        .select()
+        .single();
+
+    if (devErr) throw devErr;
+
+    const base = typeData.base_type;
+
+    if (base === "light") {
+        const { error: lightErr } = await db.from("lights").insert({ device_id: device.id });
+        if (lightErr) throw lightErr;
+    } else if (base === "fan") {
+        const { error: fanErr } = await db.from("fans").insert({ device_id: device.id });
+        if (fanErr) throw fanErr;
+    }
+
+    return device;
+};
+
+export const getDevicesByUser = async (user_id, db = supabase) => {
+    const { data, error } = await db
+        .from("devices")
+        .select("id, name, type, status, image")
+        .eq("user_id", user_id)
+        .order("id", { ascending: true });
+
+    if (error) throw error;
+    return data;
+};
+
+export const updateDeviceStatus = async ({ device_id, user_id, status, db = supabase }) => {
+    // ensure ownership
+    const { data: device, error: findErr } = await db
+        .from("devices")
+        .select("user_id")
+        .eq("id", device_id)
+        .limit(1)
+        .single();
+
+    if (findErr) throw findErr;
+    if (device.user_id !== user_id) throw { status: 403, message: "Forbidden" };
+
+    const { data, error } = await db
+        .from("devices")
+        .update({ status })
+        .eq("id", device_id)
+        .select()
+        .single();
+
+    if (error) throw error;
+    return data;
+};
+
+export const deleteDevice = async ({ device_id, user_id, db = supabase }) => {
+    // ensure ownership
+    const { data: device, error: findErr } = await db
+        .from("devices")
+        .select("user_id")
+        .eq("id", device_id)
+        .limit(1)
+        .single();
+
+    if (findErr) throw findErr;
+    if (device.user_id !== user_id) throw { status: 403, message: "Forbidden" };
+
+    const { error } = await db.from("devices").delete().eq("id", device_id);
+    if (error) throw error;
+    return true;
 };

@@ -1,7 +1,7 @@
 import supabase from "../services/supabaseClient.js";
 import profileModel from "../models/profileModel.js";
 
-// get profile of curr user
+// TRANG PROFILE
 export const getProfile = async (req, res) => {
     const userId = req.user.id;
 

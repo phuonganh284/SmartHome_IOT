@@ -13,7 +13,6 @@ export const getLightAttributes = async ({ device_id, user_id, db = supabase }) 
 
     if (error) throw error;
 
-    // data.lights is an array because of relational select
     const light = data.lights && data.lights[0] ? data.lights[0] : { color: null, intensity: null };
 
     return {
@@ -25,7 +24,7 @@ export const getLightAttributes = async ({ device_id, user_id, db = supabase }) 
 };
 
 export const setLightPower = async ({ device_id, user_id, status, db = supabase }) => {
-    // reuse deviceModel update to keep ownership checks consistent
+    // call deviceModel 
     return deviceModel.updateDeviceStatus({ device_id, user_id, status, db });
 };
 

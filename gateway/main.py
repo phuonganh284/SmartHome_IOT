@@ -13,13 +13,22 @@ load_dotenv()
 AIO_USERNAME = os.getenv("AIO_USERNAME")
 AIO_KEY = os.getenv("AIO_KEY")
 
+# backend webhook url (e.g. http://host:3000)
+BACKEND_URL = os.getenv("BACKEND_URL")
+
+
 if not AIO_USERNAME or not AIO_KEY:
     print("Adafruit IO credentials missing. Set AIO_USERNAME and AIO_KEY in gateway/.env")
     sys.exit(1)
 
 # --- feeds ---
 SENSOR_FEEDS = ["dadn-temp", "dadn-ir"]
-CONTROL_FEEDS = ["dadn-fan-1","dadn-fan-2", "dadn-led"]
+
+CONTROL_FEEDS = [
+    "dadn-fan-1-power", "dadn-fan-1-mode", "dadn-fan-1-speed",
+    "dadn-fan-2-power", "dadn-fan-2-mode", "dadn-fan-2-speed",
+    "dadn-led-power", "dadn-led-intensity", "dadn-led-color"
+]
 
 # --- callbacks ---
 def connected(client):
@@ -34,6 +43,19 @@ def message(client, feed_id, payload):
         ser.write((str(payload) + "#").encode())
     else:
         simulateDevice(feed_id, payload)
+
+    # notify backend if configured
+    if BACKEND_URL:
+        try:
+            import requests
+            url = BACKEND_URL.rstrip("/") + "/api/iot/feeds"
+            resp = requests.post(url, json={"feed": feed_id, "payload": payload}, timeout=5)
+            if resp.ok:
+                print(f"Notified backend: {url} -> {resp.status_code}")
+            else:
+                print(f"Backend notify failed: {resp.status_code} {resp.text}")
+        except Exception as e:
+            print("Backend notify error:", e)
 
 def simulateDevice(feed_id, payload):
     if "fan" in feed_id:

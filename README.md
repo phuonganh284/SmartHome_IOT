@@ -19,8 +19,7 @@ Smart home IoT project — mobile app (Expo React Native), backend (Express + Su
 ```bash
 cd backend
 npm install
-
-node server.js
+npm run start
 ```
 
 3. Endpoints
@@ -39,17 +38,24 @@ curl -H "Authorization: Bearer <TOKEN>" http://localhost:3000/api/devices
 
 ## Mobile App (Expo React Native)
 
-1. Install and run:
+1. <You can skip it, do it when you see error such as No network connection> Create `frontend/.env` and set `EXPO_PUBLIC_API_URL` (recommended for real device testing), for example: 
 
-```bash
-cd mobile
-npm install
-npx expo start --tunnel
+```dotenv
+EXPO_PUBLIC_API_URL=http://<your ip>:3000/api
 ```
 
-Open Expo Go on your phone and scan the QR code from the terminal.
+2. Install and run Expo:
 
-Note: This project is configured for mobile runtime only. The `frontend/` folder is legacy and not used for the current app runtime.
+```bash
+cd frontend
+npm install
+npx expo start
+```
+
+Use `npx expo start -c` when you need to clear Expo cache.
+You can also use `npx expo start --lan` to force LAN mode.
+Download Expo Go on App Store or Google Play
+Open Expo Go on your phone and scan the QR code from the terminal.
 
 ## Gateway (Micro:bit + Adafruit IO)
 

@@ -1,7 +1,63 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import Constants from 'expo-constants';
+import { Platform } from 'react-native';
 
-const rawBaseUrl = process.env.EXPO_PUBLIC_API_URL ?? 'http://192.168.1.10:3000/api';
-const API_BASE_URL = rawBaseUrl.replace(/\/$/, '');
+const parseHost = (value?: string | null) => {
+  if (!value) {
+    return null;
+  }
+
+  const withoutScheme = value.replace(/^https?:\/\//, '');
+  const firstSegment = withoutScheme.split('/')[0] ?? '';
+  const host = firstSegment.split(':')[0] ?? '';
+  return host || null;
+};
+
+const getExpoHostIp = () => {
+  const candidates = [
+    Constants.expoConfig?.hostUri,
+    (Constants as any).manifest?.debuggerHost,
+    (Constants as any).manifest2?.extra?.expoClient?.hostUri,
+    (Constants as any).manifest2?.extra?.expoGo?.debuggerHost,
+    (Constants as any).manifest2?.extra?.expoGo?.developer?.tool,
+    (Constants as any).linkingUri,
+  ];
+
+  for (const candidate of candidates) {
+    const host = parseHost(candidate);
+    if (host) {
+      return host;
+    }
+  }
+
+  return null;
+};
+
+const normalizeHostForDevice = (host: string) => {
+  const isLocalHost = host === 'localhost' || host === '127.0.0.1' || host === '::1';
+  if (isLocalHost && Platform.OS === 'android') {
+    return '10.0.2.2';
+  }
+
+  return host;
+};
+
+const resolveApiBaseUrl = () => {
+  const fromEnv = process.env.EXPO_PUBLIC_API_URL?.trim();
+  if (fromEnv) {
+    return fromEnv;
+  }
+
+  const hostIp = getExpoHostIp();
+  if (hostIp) {
+    const normalized = normalizeHostForDevice(hostIp);
+    return `http://${normalized}:3000/api`;
+  }
+
+  return Platform.OS === 'android' ? 'http://10.0.2.2:3000/api' : 'http://localhost:3000/api';
+};
+
+const API_BASE_URL = resolveApiBaseUrl().replace(/\/$/, '');
 
 let authToken = '';
 const AUTH_TOKEN_KEY = 'smarthome_auth_token';

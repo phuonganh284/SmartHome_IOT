@@ -1,6 +1,21 @@
 import supabase from "../services/supabaseClient.js";
 import * as deviceModel from "./deviceModel.js";
 
+const ensureFanRow = async (db, device_id) => {
+    const { data: existing, error: findErr } = await db
+        .from("fans")
+        .select("device_id")
+        .eq("device_id", device_id)
+        .maybeSingle();
+
+    if (findErr) throw findErr;
+
+    if (!existing) {
+        const { error: insertErr } = await db.from("fans").insert({ device_id });
+        if (insertErr) throw insertErr;
+    }
+};
+
 export const getFanAttributes = async ({ device_id, user_id, db = supabase }) => {
     const { data, error } = await db
         .from("devices")
@@ -12,7 +27,10 @@ export const getFanAttributes = async ({ device_id, user_id, db = supabase }) =>
 
     if (error) throw error;
 
-    const fan = data.fans && data.fans[0] ? data.fans[0] : { mode: null, speed_level: null };
+    const relation = data.fans;
+    const fan = Array.isArray(relation)
+        ? (relation[0] || { mode: null, speed_level: null })
+        : (relation || { mode: null, speed_level: null });
 
     return {
         name: data.name,
@@ -36,6 +54,8 @@ export const setFanMode = async ({ device_id, user_id, mode, db = supabase }) =>
 
     if (findErr) throw findErr;
     if (device.user_id !== user_id) throw { status: 403, message: "Forbidden" };
+
+    await ensureFanRow(db, device_id);
 
     const { data, error } = await db
         .from("fans")
@@ -61,6 +81,8 @@ export const setFanSpeed = async ({ device_id, user_id, speed_level, db = supaba
 
     if (findErr) throw findErr;
     if (device.user_id !== user_id) throw { status: 403, message: "Forbidden" };
+
+    await ensureFanRow(db, device_id);
 
     const { data, error } = await db
         .from("fans")

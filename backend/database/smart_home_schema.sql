@@ -29,7 +29,7 @@ create table devices (
     user_id uuid references users(id) on delete cascade,
     name varchar(255),
     type varchar(100), 
-    status int default 0 (status IN (0,1)),
+    status int default 0 check (status in (0, 1)),
     adafruit_key varchar(255),
     image text,
     created_at timestamp default now()

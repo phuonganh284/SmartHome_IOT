@@ -1,0 +1,327 @@
+import { Image } from 'expo-image';
+import { router } from 'expo-router';
+import { useMemo, useState } from 'react';
+import { Alert, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, View } from 'react-native';
+
+type Category = 'lighting' | 'fan';
+
+type DeviceCandidate = {
+  id: string;
+  name: string;
+  type: 'light' | 'fan' | 'ac' | 'lamp';
+  category: Category;
+  image: any;
+};
+
+const categories: Array<{ id: Category; label: string }> = [
+  { id: 'lighting', label: 'Lightning' },
+  { id: 'fan', label: 'Fan' },
+];
+
+const candidates: DeviceCandidate[] = [
+  {
+    id: 'ac',
+    name: 'Smart AC',
+    type: 'ac',
+    category: 'fan',
+    image: require('@/assets/images/smartAC.png'),
+  },
+  {
+    id: 'fan',
+    name: 'Smart Fan',
+    type: 'fan',
+    category: 'fan',
+    image: require('@/assets/images/smartfan.png'),
+  },
+  {
+    id: 'ac-2',
+    name: 'Smart AC_2',
+    type: 'ac',
+    category: 'fan',
+    image: require('@/assets/images/smartAC.png'),
+  },
+  {
+    id: 'light',
+    name: 'Smart Light',
+    type: 'light',
+    category: 'lighting',
+    image: require('@/assets/images/smart_light.png'),
+  },
+  {
+    id: 'lamp',
+    name: 'Smart Lamp',
+    type: 'lamp',
+    category: 'lighting',
+    image: require('@/assets/images/lamp.png'),
+  },
+];
+
+export default function AutomationCreateScreen() {
+  const [activeCategory, setActiveCategory] = useState<Category>('fan');
+  const [selectedMap, setSelectedMap] = useState<Record<string, boolean>>({
+    ac: true,
+    fan: true,
+  });
+
+  const filteredCandidates = useMemo(
+    () => candidates.filter((item) => item.category === activeCategory),
+    [activeCategory]
+  );
+
+  const toggleSelect = (id: string) => {
+    setSelectedMap((prev) => {
+      const isCurrentlySelected = !!prev[id];
+      if (isCurrentlySelected) {
+        return { ...prev, [id]: false };
+      }
+
+      const selectedIds = Object.keys(prev).filter((key) => prev[key]);
+      if (selectedIds.length === 0) {
+        return { ...prev, [id]: true };
+      }
+
+      const selectedCategory = candidates.find((item) => item.id === selectedIds[0])?.category;
+      const nextCategory = candidates.find((item) => item.id === id)?.category;
+
+      if (selectedCategory && nextCategory && selectedCategory !== nextCategory) {
+        Alert.alert(
+          'Selection Restricted',
+          'You can only select multiple devices in the same category.'
+        );
+        return prev;
+      }
+
+      return { ...prev, [id]: true };
+    });
+  };
+
+  const clearAll = () => setSelectedMap({});
+
+  const handleSelect = () => {
+    const selectedIds = Object.keys(selectedMap).filter((key) => selectedMap[key]);
+    if (selectedIds.length === 0) {
+      Alert.alert('No Device Selected', 'Please select at least one device.');
+      return;
+    }
+
+    const category = candidates.find((item) => item.id === selectedIds[0])?.category ?? activeCategory;
+    router.push({
+      pathname: '/automation-condition',
+      params: { category, selected: selectedIds.join(',') },
+    });
+  };
+
+  return (
+    <SafeAreaView style={styles.safeArea}>
+      <View style={styles.container}>
+        <ScrollView showsVerticalScrollIndicator={false}>
+          <View style={styles.headerRow}>
+            <Pressable onPress={() => router.back()} hitSlop={8}>
+              <Text style={styles.backArrow}>{'←'}</Text>
+            </Pressable>
+            <Text style={styles.title}>Select Devices</Text>
+            <View style={styles.headerRight} />
+          </View>
+
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.categoryRow}
+            style={styles.categoryScroll}>
+            {categories.map((item) => {
+              const isActive = activeCategory === item.id;
+              return (
+                <Pressable
+                  key={item.id}
+                  style={[styles.categoryChip, isActive && styles.categoryChipActive]}
+                  onPress={() => setActiveCategory(item.id)}>
+                  <Text style={[styles.categoryText, isActive && styles.categoryTextActive]}>{item.label}</Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+
+          <View style={styles.grid}>
+            {filteredCandidates.map((item) => {
+              const selected = !!selectedMap[item.id];
+              return (
+                <View key={item.id} style={styles.cardWrapper}>
+                  <Pressable style={styles.card} onPress={() => toggleSelect(item.id)}>
+                    {selected && (
+                      <View style={styles.checkBadge}>
+                        <Text style={styles.checkText}>✓</Text>
+                      </View>
+                    )}
+                    <Image source={item.image} style={styles.deviceImage} contentFit="contain" />
+                  </Pressable>
+                  <Text style={styles.deviceName}>{item.name}</Text>
+                </View>
+              );
+            })}
+          </View>
+        </ScrollView>
+
+        <View style={styles.actionsRow}>
+          <Pressable style={styles.clearButton} onPress={clearAll}>
+            <Text style={styles.clearText}>Clear all</Text>
+          </Pressable>
+          <Pressable style={styles.selectButton} onPress={handleSelect}>
+            <Text style={styles.selectText}>Select</Text>
+          </Pressable>
+        </View>
+      </View>
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  safeArea: { flex: 1, backgroundColor: '#ECECEC' },
+  container: {
+    flex: 1,
+    paddingHorizontal: 14,
+    paddingTop: 12,
+    paddingBottom: 26,
+  },
+  headerRow: {
+    height: 70,
+    marginTop: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  backArrow: {
+    fontSize: 40,
+    color: '#232323',
+  },
+  title: {
+    color: '#212121',
+    fontSize: 24,
+    lineHeight: 38.4,
+    fontWeight: '700',
+    letterSpacing: 0,
+    fontFamily: 'Noto Sans',
+    marginTop: 12,
+  },
+  headerRight: {
+    width: 32,
+  },
+  categoryScroll: {
+    marginTop: 20,
+  },
+  categoryRow: {
+    marginHorizontal: -10,
+    height: 75,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    gap: 10,
+  },
+  categoryChip: {
+    width: 146,
+    height: 35,
+    paddingHorizontal: 20,
+    paddingVertical: 0,
+    borderRadius: 10,
+    backgroundColor: '#F5F5F5',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  categoryChipActive: {
+    backgroundColor: '#000000',
+  },
+  categoryText: {
+    color: '#000000',
+    fontSize: 14,
+    fontWeight: '500',
+    textAlign: 'center',
+    includeFontPadding: false,
+  },
+  categoryTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+  },
+  grid: {
+    marginTop: 24,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    rowGap: 32,
+  },
+  cardWrapper: {
+    width: '47.3%',
+    alignItems: 'center',
+  },
+  card: {
+    width: '100%',
+    backgroundColor: '#F3F3F3',
+    borderRadius: 8,
+    minHeight: 132,
+    paddingTop: 10,
+    paddingBottom: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkBadge: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#000000',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 2,
+  },
+  checkText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+    lineHeight: 14,
+  },
+  deviceImage: {
+    width: 140,
+    height: 120,
+  },
+  deviceName: {
+    marginTop: 8,
+    color: '#2D2D2D',
+    fontSize: 16,
+    fontWeight: '500',
+    textAlign: 'center',
+  },
+  actionsRow: {
+    marginTop: 'auto',
+    width: '100%',
+    flexDirection: 'row',
+    gap: 10,
+  },
+  clearButton: {
+    flex: 1,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    paddingVertical: 12,
+  },
+  clearText: {
+    color: '#121212',
+    fontWeight: '700',
+    fontSize: 16,
+    fontFamily: 'Noto Sans',
+  },
+  selectButton: {
+    flex: 1,
+    borderRadius: 10,
+    backgroundColor: '#101010',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+  },
+  selectText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 16,
+    fontFamily: 'Noto Sans',
+  },
+});

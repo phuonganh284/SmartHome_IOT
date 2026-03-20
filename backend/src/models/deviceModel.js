@@ -50,7 +50,7 @@ export const createDevice = async ({ db = supabase, user_id, type, name = null, 
     if (!adafruit_key) {
         let feedKey = null;
         const t = (type || "").toLowerCase();
-        if (t.includes("fan")) {
+        if (t.includes("fan") || t.includes("ac")) {
             const n = (device.id % 2) + 1;
             feedKey = `dadn-fan-${n}`;
         } else if (t.includes("light") || t.includes("led")) {

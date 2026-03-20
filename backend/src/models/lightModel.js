@@ -13,7 +13,10 @@ export const getLightAttributes = async ({ device_id, user_id, db = supabase }) 
 
     if (error) throw error;
 
-    const light = data.lights && data.lights[0] ? data.lights[0] : { color: null, intensity: null };
+    const relation = data.lights;
+    const light = Array.isArray(relation)
+        ? (relation[0] || { color: null, intensity: null })
+        : (relation || { color: null, intensity: null });
 
     return {
         name: data.name,

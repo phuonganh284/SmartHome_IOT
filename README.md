@@ -1,11 +1,12 @@
 # SmartHome_IOT
 
-Smart home IoT project — backend (Express + Supabase), frontend (React + Vite), gateway (Micro:bit + Adafruit IO)
+Smart home IoT project — mobile app (Expo React Native), backend (Express + Supabase), gateway (Micro:bit + Adafruit IO)
 
 ## Prerequisites
 - Node.js (16+ recommended)
 - npm
 - Python 3 (for the gateway script)
+- Expo Go (on mobile device) for app testing
 
 ## Backend
 
@@ -36,17 +37,19 @@ Example curl to fetch devices:
 curl -H "Authorization: Bearer <TOKEN>" http://localhost:3000/api/devices
 ```
 
-## Frontend
+## Mobile App (Expo React Native)
 
 1. Install and run:
 
 ```bash
-cd frontend
+cd mobile
 npm install
-npm run dev
+npx expo start --tunnel
 ```
 
-The Vite dev server will start and serve the React app.
+Open Expo Go on your phone and scan the QR code from the terminal.
+
+Note: This project is configured for mobile runtime only. The `frontend/` folder is legacy and not used for the current app runtime.
 
 ## Gateway (Micro:bit + Adafruit IO)
 

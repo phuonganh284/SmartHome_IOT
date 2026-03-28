@@ -73,6 +73,27 @@ export const publishCommandForDevice = async ({ device_id, db = supabase, action
         }
     }
 
+    // normalize common action synonyms (from UI or rules)
+    const synonymMap = {
+        turn_on: "power",
+        turn_off: "power",
+        switch_on: "power",
+        switch_off: "power",
+        toggle: "power"
+    };
+
+    // Map synonyms to canonical action and apply sensible default values
+    if (synonymMap[action]) {
+        const orig = action;
+        action = synonymMap[action];
+        if ((orig === "turn_on" || orig === "switch_on") && (value === undefined || value === null)) value = 1;
+        if ((orig === "turn_off" || orig === "switch_off") && (value === undefined || value === null)) value = 0;
+        if (orig === "toggle" && (value === undefined || value === null)) {
+            // default toggle -> try to set to 1 (caller should handle toggle semantics)
+            value = 1;
+        }
+    }
+
     // map action to feed suffix
     const actionSuffixMap = {
         power: "power",
@@ -91,15 +112,45 @@ export const publishCommandForDevice = async ({ device_id, db = supabase, action
 
     // transform value for certain actions
     let publishValue = value;
-    if (action === "color") {
-        publishValue = hexToRgbString(String(value));
+    // if publishing power and value is null/undefined, default to ON (1)
+    if (action === "power" && (publishValue === undefined || publishValue === null)) {
+        publishValue = 1;
     }
+    // if (action === "color") {
+    //     publishValue = hexToRgbString(String(value));
+    // }
 
     // logging to help debug 
     try {
         console.log(`[IoT] publish: device=${device_id} action=${action} -> feed=${feedKey} value=${publishValue}`);
         const resp = await publishToFeed(feedKey, publishValue);
         console.log(`[IoT] publish OK: feed=${feedKey}`);
+
+        // reflect the command in database 
+        try {
+            if (action === "power") {
+                const status = Number(publishValue) === 1 ? 1 : 0;
+                await db.from("devices").update({ status }).eq("id", device_id);
+            } else if (action === "speed") {
+                const n = Number(publishValue);
+                if (Number.isFinite(n)) {
+                    await db.from("fans").update({ speed_level: n, updated_at: new Date() }).eq("device_id", device_id);
+                    // ensure devices.status is on when speed > 0
+                    if (n > 0) await db.from("devices").update({ status: 1 }).eq("id", device_id);
+                }
+            } else if (action === "mode") {
+                await db.from("fans").update({ mode: String(publishValue) }).eq("device_id", device_id);
+            } else if (action === "intensity") {
+                const n = Number(publishValue);
+                if (Number.isFinite(n)) await db.from("lights").update({ intensity: n }).eq("device_id", device_id);
+            } else if (action === "color") {
+                const v = String(publishValue).trim();
+                await db.from("lights").update({ color: v }).eq("device_id", device_id);
+            }
+        } catch (dbErr) {
+            console.warn("[IoT] DB update after publish failed:", dbErr.message || dbErr);
+        }
+
         return { feed: feedKey, result: resp };
     } catch (e) {
         console.error(`[IoT] publish FAILED: feed=${feedKey} error=`, e.message || e);

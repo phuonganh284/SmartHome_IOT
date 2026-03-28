@@ -70,7 +70,7 @@ export const setFanMode = async ({ device_id, user_id, mode, db = supabase }) =>
 
 export const setFanSpeed = async ({ device_id, user_id, speed_level, db = supabase }) => {
     if (typeof speed_level !== "number") speed_level = Number(speed_level);
-    if (isNaN(speed_level) || speed_level < 0 || speed_level > 3) throw { status: 400, message: "speed_level must be 0-3" };
+    if (isNaN(speed_level) || speed_level < 0 || speed_level > 5) throw { status: 400, message: "speed_level must be 0-5" };
 
     const { data: device, error: findErr } = await db
         .from("devices")

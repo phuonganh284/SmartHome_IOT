@@ -3,6 +3,8 @@ import os
 import random
 import time
 import serial.tools.list_ports
+import json
+import requests
 from Adafruit_IO import MQTTClient
 from dotenv import load_dotenv
 
@@ -22,7 +24,7 @@ if not AIO_USERNAME or not AIO_KEY:
     sys.exit(1)
 
 # --- feeds ---
-SENSOR_FEEDS = ["dadn-temp", "dadn-ir"]
+SENSOR_FEEDS = ["dadn-sensor"]
 
 CONTROL_FEEDS = [
     "dadn-fan-1-power", "dadn-fan-1-mode", "dadn-fan-1-speed",
@@ -35,8 +37,58 @@ def connected(client):
     print("Connected to Adafruit IO!")
     for feed in CONTROL_FEEDS:
         client.subscribe(feed)
+    for feed in SENSOR_FEEDS:
+        client.subscribe(feed)    
 
 def message(client, feed_id, payload):
+    print(f"Received: [{feed_id}] -> {payload}")
+
+    # 1. SENSOR DATA 
+    if feed_id in SENSOR_FEEDS:
+        if not BACKEND_URL:
+            return
+        try:
+            parsed = None
+
+            # Try JSON first
+            try:
+                parsed = json.loads(payload)
+            except Exception:
+                # fallback: "temp:23,hum:45"
+                parts = [p for p in payload.split(",") if p]
+                d = {}
+                for p in parts:
+                    if ":" in p:
+                        k, v = p.split(":", 1)
+                        try:
+                            d[k.strip()] = float(v.strip())
+                        except:
+                            d[k.strip()] = v.strip()
+                if d:
+                    parsed = d
+
+            if parsed:
+                url = BACKEND_URL.rstrip("/") + "/api/iot/sensor_readings"
+                headers = {}
+
+                resp = requests.post(
+                    url,
+                    json={"feed": feed_id, "readings": parsed},
+                    headers=headers,
+                    timeout=5
+                )
+
+                if resp.ok:
+                    print(f"[SENSOR] forwarded → {url}")
+                else:
+                    print(f"[SENSOR ERROR] {resp.status_code}: {resp.text}")
+
+        except Exception as e:
+            print("Sensor forward error:", e)
+
+        return   
+
+    # 2. CONTROL FLOW
     print(f"Command Received: [{feed_id}] -> {payload}")
 
     if isMicrobitConnected:
@@ -44,16 +96,21 @@ def message(client, feed_id, payload):
     else:
         simulateDevice(feed_id, payload)
 
-    # notify backend if configured
+    # notify backend (control only)
     if BACKEND_URL:
         try:
-            import requests
             url = BACKEND_URL.rstrip("/") + "/api/iot/feeds"
-            resp = requests.post(url, json={"feed": feed_id, "payload": payload}, timeout=5)
+            resp = requests.post(
+                url,
+                json={"feed": feed_id, "payload": payload},
+                timeout=5
+            )
+
             if resp.ok:
-                print(f"Notified backend: {url} -> {resp.status_code}")
+                print(f"[CONTROL] notified backend → {url}")
             else:
-                print(f"Backend notify failed: {resp.status_code} {resp.text}")
+                print(f"[CONTROL ERROR] {resp.status_code}: {resp.text}")
+
         except Exception as e:
             print("Backend notify error:", e)
 

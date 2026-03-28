@@ -15,6 +15,8 @@ create table users (
     created_at timestamp default now()
 );
 
+---------------------------------------- 1. OUT DEVICES -----------------------------------------------
+
 -- DEVICE TYPES
 create table device_types (
     type varchar primary key,     
@@ -45,7 +47,7 @@ create table lights (
 -- FANS
 create table fans (
     device_id bigint primary key references devices(id) on delete cascade,
-    speed_level int check (speed_level between 0 and 100),
+    speed_level int check (speed_level between 0 and 5),
     mode text default 'auto' --"low", "medium", "high", "auto"
 
 );
@@ -67,6 +69,9 @@ create table sensor_readings (
     created_at timestamp default now()
 );
 
+create index idx_sensor_readings_sensor_time 
+on sensor_readings(sensor_id, created_at desc);
+
 -- DEVICE ACTIONS
 create table device_actions (
     id bigserial primary key,
@@ -76,19 +81,60 @@ create table device_actions (
     created_at timestamp default now()
 );
 
+
+---------------------------------------- 2. AUTOMATION -----------------------------------------------
+
 -- AUTOMATION RULES
 create table automation_rules (
     id bigint generated always as identity primary key,
     user_id uuid references users(id) on delete cascade,
-    sensor_id bigint references sensors(id),
-    target_device_id bigint references devices(id),
-    condition varchar(20),
-    threshold float,
-    action varchar(100),
+    name varchar(255),
+    is_active boolean default true,
+    last_executed timestamp,
     created_at timestamp default now()
 );
 
--- TRIGGER/PROCEDURE
+
+-- RULE -> DEVICES (MANY-TO-MANY)
+create table rule_devices (
+    rule_id bigint references automation_rules(id) on delete cascade,
+    device_id bigint references devices(id) on delete cascade,
+    primary key (rule_id, device_id)
+);
+
+
+-- RULE CONDITIONS
+create table rule_conditions (
+    id bigint generated always as identity primary key,
+    rule_id bigint references automation_rules(id) on delete cascade,
+    sensor_type varchar(100),   -- "temperature", "humidity"
+    operator varchar(5),        -- ">", "<", "="
+    value float
+);
+
+
+-- RULE ACTIONS
+create table rule_actions (
+    id bigint generated always as identity primary key,
+    rule_id bigint references automation_rules(id) on delete cascade,
+    action varchar(50),   -- "turn_on", "turn_off"
+    value varchar(50)     -- optional (speed, intensity, etc.)
+);
+
+
+-- RULE SCHEDULES
+create table rule_schedules (
+    id bigint generated always as identity primary key,
+    rule_id bigint references automation_rules(id) on delete cascade,
+    start_time time,
+    end_time time,
+    start_date date,
+    end_date date
+);
+
+
+
+---------------------------------------- 3. TRIGGER -----------------------------------------------
 create function handle_new_user()
 returns trigger as $$
 begin

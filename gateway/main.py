@@ -17,6 +17,9 @@ AIO_KEY = os.getenv("AIO_KEY")
 
 # backend webhook url (e.g. http://host:3000)
 BACKEND_URL = os.getenv("BACKEND_URL")
+if not BACKEND_URL:
+    BACKEND_URL = "http://localhost:3000"
+    print("BACKEND_URL not set — defaulting to http://localhost:3000")
 
 
 if not AIO_USERNAME or not AIO_KEY:
@@ -50,11 +53,12 @@ def message(client, feed_id, payload):
         try:
             parsed = None
 
-            # Try JSON first
+            # JSON format
             try:
                 parsed = json.loads(payload)
-            except Exception:
-                # fallback: "temp:23,hum:45"
+                print("[SENSOR DEBUG] parsed as JSON")
+            except Exception as e:
+                print(f"[SENSOR DEBUG] json.loads failed: {e}")
                 parts = [p for p in payload.split(",") if p]
                 d = {}
                 for p in parts:
@@ -67,9 +71,27 @@ def message(client, feed_id, payload):
                 if d:
                     parsed = d
 
+            # String format ("40,34,45")
+            if parsed is None:
+                parts = [p.strip() for p in payload.split(",") if p.strip()]
+                print(f"[SENSOR DEBUG] CSV parts: {parts}")
+                if parts:
+                    is_number = True
+                    for p in parts:
+                        try:
+                            float(p)
+                        except Exception:
+                            is_number = False
+                            break
+                    print(f"[SENSOR DEBUG] is_number={is_number}")
+                    if is_number:
+                        parsed = ",".join(parts)
+                        print(f"[SENSOR DEBUG] treated as CSV string -> {parsed}")
+
             if parsed:
                 url = BACKEND_URL.rstrip("/") + "/api/iot/sensor_readings"
                 headers = {}
+                print(f"[SENSOR] forwarding payload: {parsed} -> {url}")
 
                 resp = requests.post(
                     url,

@@ -134,9 +134,21 @@ export const deleteRule = async ({ rule_id, user_id, db = supabase }) => {
     return true;
 };
 
+export const setRuleActive = async ({ rule_id, user_id, is_active = true, db = supabase }) => {
+    // ensure ownership
+    const { data: existing, error: exErr } = await db.from("automation_rules").select("user_id").eq("id", rule_id).limit(1).single();
+    if (exErr) throw exErr;
+    if (existing.user_id !== user_id) throw { status: 403, message: "Forbidden" };
+
+    const { data, error } = await db.from("automation_rules").update({ is_active }).eq("id", rule_id).select().single();
+    if (error) throw error;
+    return data;
+};
+
 export default {
     getRulesByUser,
     createRule,
     updateRule,
-    deleteRule
+    deleteRule,
+    setRuleActive
 };

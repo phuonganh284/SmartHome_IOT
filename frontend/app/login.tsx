@@ -50,6 +50,10 @@ export default function SignInScreen() {
     router.push('/signup');
   };
 
+  const handleForgotPassword = () => {
+    router.push('/forgot-password');
+  };
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <KeyboardAvoidingView
@@ -78,7 +82,7 @@ export default function SignInScreen() {
               onChangeText={setPassword}
             />
 
-            <Pressable style={styles.forgotPassword}>
+            <Pressable style={styles.forgotPassword} onPress={handleForgotPassword}>
               <Text style={styles.forgotPasswordText}>Forgot password?</Text>
             </Pressable>
 

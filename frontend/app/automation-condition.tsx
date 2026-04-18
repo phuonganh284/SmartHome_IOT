@@ -77,6 +77,8 @@ function ConditionCard({
 export default function AutomationConditionScreen() {
   const params = useLocalSearchParams<{
     category?: string;
+    selected?: string;
+    selectedType?: string;
     taskId?: string;
     taskName?: string;
     action?: string;
@@ -110,7 +112,20 @@ export default function AutomationConditionScreen() {
   const [temperature, setTemperature] = useState(() => parseNumber(params.temperature, 27));
   const [humidity, setHumidity] = useState(() => parseNumber(params.humidity, 5));
 
-  const continueTarget = '/automation-schedule';
+  const handleContinue = () => {
+    router.push({
+      pathname: '/automation-schedule',
+      params: {
+        category: params.category ?? '',
+        selected: params.selected ?? '',
+        selectedType: params.selectedType ?? '',
+        tempComparator,
+        humidityComparator,
+        temperature: String(temperature),
+        humidity: String(humidity),
+      },
+    });
+  };
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -145,7 +160,7 @@ export default function AutomationConditionScreen() {
           />
         </ScrollView>
 
-        <Pressable style={styles.continueButton} onPress={() => router.push(continueTarget)}>
+        <Pressable style={styles.continueButton} onPress={handleContinue}>
           <Text style={styles.continueText}>Continue</Text>
         </Pressable>
       </View>

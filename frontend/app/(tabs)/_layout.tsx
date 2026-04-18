@@ -4,6 +4,14 @@ import { Image } from 'expo-image';
 
 import { HapticTab } from '@/components/haptic-tab';
 
+const tabIconStyle = (focused: boolean) => ({
+  width: 24,
+  height: 24,
+  tintColor: focused ? '#111111' : '#BDBFC4',
+  transform: [{ scale: focused ? 1.12 : 1 }],
+  opacity: focused ? 1 : 0.92,
+});
+
 export default function TabLayout() {
   return (
     <Tabs
@@ -26,7 +34,7 @@ export default function TabLayout() {
           tabBarIcon: ({ focused }) => (
             <Image
               source={require('@/assets/images/home.png')}
-              style={{ width: 24, height: 24, tintColor: focused ? '#C9CBD0' : '#BDBFC4' }}
+              style={tabIconStyle(focused)}
               contentFit="contain"
             />
           ),
@@ -39,7 +47,7 @@ export default function TabLayout() {
           tabBarIcon: ({ focused }) => (
             <Image
               source={require('@/assets/images/Wifi.png')}
-              style={{ width: 24, height: 24, tintColor: focused ? '#9EA0A6' : '#BDBFC4' }}
+              style={tabIconStyle(focused)}
               contentFit="contain"
             />
           ),
@@ -52,7 +60,7 @@ export default function TabLayout() {
           tabBarIcon: ({ focused }) => (
             <Image
               source={require('@/assets/images/bar-chart-2.png')}
-              style={{ width: 24, height: 24, tintColor: focused ? '#9EA0A6' : '#BDBFC4' }}
+              style={tabIconStyle(focused)}
               contentFit="contain"
             />
           ),
@@ -65,7 +73,7 @@ export default function TabLayout() {
           tabBarIcon: ({ focused }) => (
             <Image
               source={require('@/assets/images/user.png')}
-              style={{ width: 24, height: 24, tintColor: focused ? '#9EA0A6' : '#BDBFC4' }}
+              style={tabIconStyle(focused)}
               contentFit="contain"
             />
           ),

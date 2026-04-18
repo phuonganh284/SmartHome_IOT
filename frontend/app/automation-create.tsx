@@ -1,14 +1,15 @@
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Alert, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { deviceAPI, type Device } from '@/services/api';
 
 type Category = 'lighting' | 'fan';
 
 type DeviceCandidate = {
-  id: string;
+  id: number;
   name: string;
-  type: 'light' | 'fan' | 'ac' | 'lamp';
+  type: string;
   category: Category;
   image: any;
 };
@@ -18,69 +19,71 @@ const categories: Array<{ id: Category; label: string }> = [
   { id: 'fan', label: 'Fan' },
 ];
 
-const candidates: DeviceCandidate[] = [
-  {
-    id: 'ac',
-    name: 'Smart AC',
-    type: 'ac',
-    category: 'fan',
-    image: require('@/assets/images/smartAC.png'),
-  },
-  {
-    id: 'fan',
-    name: 'Smart Fan',
-    type: 'fan',
-    category: 'fan',
-    image: require('@/assets/images/smartfan.png'),
-  },
-  {
-    id: 'ac-2',
-    name: 'Smart AC_2',
-    type: 'ac',
-    category: 'fan',
-    image: require('@/assets/images/smartAC.png'),
-  },
-  {
-    id: 'light',
-    name: 'Smart Light',
-    type: 'light',
-    category: 'lighting',
-    image: require('@/assets/images/smart_light.png'),
-  },
-  {
-    id: 'lamp',
-    name: 'Smart Lamp',
-    type: 'lamp',
-    category: 'lighting',
-    image: require('@/assets/images/lamp.png'),
-  },
-];
+const getCategoryFromType = (type: string): Category => {
+  const normalized = type.toLowerCase();
+  if (normalized.includes('fan') || normalized.includes('ac') || normalized.includes('air')) {
+    return 'fan';
+  }
+  return 'lighting';
+};
+
+const getImageFromType = (type: string) => {
+  const normalized = type.toLowerCase();
+  if (normalized.includes('fan')) return require('@/assets/images/smartfan.png');
+  if (normalized.includes('ac') || normalized.includes('air')) return require('@/assets/images/smartAC.png');
+  if (normalized.includes('lamp')) return require('@/assets/images/lamp.png');
+  return require('@/assets/images/smart_light.png');
+};
+
+const toCandidate = (device: Device): DeviceCandidate => ({
+  id: device.id,
+  name: device.name || `Device #${device.id}`,
+  type: device.type,
+  category: getCategoryFromType(device.type),
+  image: getImageFromType(device.type),
+});
 
 export default function AutomationCreateScreen() {
   const [activeCategory, setActiveCategory] = useState<Category>('fan');
-  const [selectedMap, setSelectedMap] = useState<Record<string, boolean>>({
-    ac: true,
-    fan: true,
-  });
+  const [selectedMap, setSelectedMap] = useState<Record<string, boolean>>({});
+  const [candidates, setCandidates] = useState<DeviceCandidate[]>([]);
+
+  useEffect(() => {
+    const loadDevices = async () => {
+      try {
+        const devices = await deviceAPI.getDevices();
+        const mapped = devices.map(toCandidate);
+        setCandidates(mapped);
+
+        const hasFanCategory = mapped.some((item) => item.category === 'fan');
+        setActiveCategory(hasFanCategory ? 'fan' : 'lighting');
+      } catch (error) {
+        Alert.alert('Cannot load devices', error instanceof Error ? error.message : 'Unknown error');
+      }
+    };
+
+    void loadDevices();
+  }, []);
 
   const filteredCandidates = useMemo(
     () => candidates.filter((item) => item.category === activeCategory),
     [activeCategory]
   );
 
-  const toggleSelect = (id: string) => {
+  const toggleSelect = (id: number) => {
     setSelectedMap((prev) => {
-      const isCurrentlySelected = !!prev[id];
+      const key = String(id);
+      const isCurrentlySelected = !!prev[key];
       if (isCurrentlySelected) {
-        return { ...prev, [id]: false };
+        return { ...prev, [key]: false };
       }
 
       const selectedIds = Object.keys(prev).filter((key) => prev[key]);
       if (selectedIds.length === 0) {
-        return { ...prev, [id]: true };
+        return { ...prev, [key]: true };
       }
 
-      const selectedCategory = candidates.find((item) => item.id === selectedIds[0])?.category;
+      const selectedCategory = candidates.find((item) => String(item.id) === selectedIds[0])?.category;
       const nextCategory = candidates.find((item) => item.id === id)?.category;
 
       if (selectedCategory && nextCategory && selectedCategory !== nextCategory) {
@@ -91,7 +94,7 @@ export default function AutomationCreateScreen() {
         return prev;
       }
 
-      return { ...prev, [id]: true };
+      return { ...prev, [key]: true };
     });
   };
 
@@ -104,10 +107,15 @@ export default function AutomationCreateScreen() {
       return;
     }
 
-    const category = candidates.find((item) => item.id === selectedIds[0])?.category ?? activeCategory;
+    const firstSelected = candidates.find((item) => String(item.id) === selectedIds[0]);
+    const category = firstSelected?.category ?? activeCategory;
     router.push({
       pathname: '/automation-condition',
-      params: { category, selected: selectedIds.join(',') },
+      params: {
+        category,
+        selected: selectedIds.join(','),
+        selectedType: firstSelected?.type || '',
+      },
     });
   };
 
@@ -142,8 +150,14 @@ export default function AutomationCreateScreen() {
           </ScrollView>
 
           <View style={styles.grid}>
+            {filteredCandidates.length === 0 ? (
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyText}>No devices in this category yet.</Text>
+              </View>
+            ) : null}
+
             {filteredCandidates.map((item) => {
-              const selected = !!selectedMap[item.id];
+              const selected = !!selectedMap[String(item.id)];
               return (
                 <View key={item.id} style={styles.cardWrapper}>
                   <Pressable style={styles.card} onPress={() => toggleSelect(item.id)}>
@@ -246,6 +260,16 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     justifyContent: 'space-between',
     rowGap: 32,
+  },
+  emptyState: {
+    width: '100%',
+    paddingVertical: 20,
+    alignItems: 'center',
+  },
+  emptyText: {
+    color: '#7A7A7F',
+    fontSize: 14,
+    fontWeight: '500',
   },
   cardWrapper: {
     width: '47.3%',

@@ -64,7 +64,7 @@ const AUTH_TOKEN_KEY = 'smarthome_auth_token';
 let tokenHydrationPromise: Promise<void> | null = null;
 
 type RequestOptions = {
-  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: unknown;
   token?: string;
 };
@@ -122,6 +122,47 @@ export type UserProfileResponse = {
   profile: UserProfile;
 };
 
+export type RuleCondition = {
+  id?: number;
+  sensor_type: string;
+  operator: '<' | '=' | '>';
+  value: number;
+};
+
+export type RuleAction = {
+  id?: number;
+  action: string;
+  value?: string | null;
+};
+
+export type RuleSchedule = {
+  id?: number;
+  start_time?: string | null;
+  end_time?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+};
+
+export type AutomationRule = {
+  id: number;
+  name: string | null;
+  is_active: boolean;
+  last_executed?: string | null;
+  created_at?: string;
+  devices: number[];
+  conditions: RuleCondition[];
+  actions: RuleAction[];
+  schedules: RuleSchedule[];
+};
+
+export type AutomationRulePayload = {
+  name: string;
+  devices: number[];
+  conditions: Array<Omit<RuleCondition, 'id'>>;
+  actions: Array<Omit<RuleAction, 'id'>>;
+  schedule?: Omit<RuleSchedule, 'id'> | null;
+};
+
 const request = async <T>(path: string, options: RequestOptions = {}): Promise<T> => {
   const { method = 'GET', body, token } = options;
 
@@ -177,6 +218,23 @@ export const authAPI = {
       method: 'POST',
       body: { email, password },
     }),
+
+  requestPasswordReset: (email: string) =>
+    request<{ message: string }>('/auth/forgot', {
+      method: 'POST',
+      body: { email },
+    }),
+
+  resetPassword: (token: string, password: string) =>
+    request<{ message: string }>('/auth/reset', {
+      method: 'POST',
+      body: { token, password },
+    }),
+};
+
+export const isEmailRateLimitError = (error: unknown) => {
+  const message = error instanceof Error ? error.message.toLowerCase() : '';
+  return message.includes('rate limit exceeded') || message.includes('too many requests');
 };
 
 export const deviceAPI = {
@@ -248,6 +306,27 @@ export const fanAPI = {
 
 export const profileAPI = {
   getProfile: () => request<UserProfileResponse>('/user/profile'),
+};
+
+export const automationAPI = {
+  getRules: () => request<AutomationRule[]>('/rules'),
+
+  createRule: (payload: AutomationRulePayload) =>
+    request<AutomationRule>('/rules', {
+      method: 'POST',
+      body: payload,
+    }),
+
+  updateRule: (id: number | string, payload: AutomationRulePayload) =>
+    request<{ ok: boolean }>(`/rules/${id}`, {
+      method: 'PUT',
+      body: payload,
+    }),
+
+  deleteRule: (id: number | string) =>
+    request<{ ok: boolean }>(`/rules/${id}`, {
+      method: 'DELETE',
+    }),
 };
 
 export { API_BASE_URL };

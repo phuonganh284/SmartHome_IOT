@@ -1,6 +1,78 @@
 import supabase from "./supabaseClient.js";
 import iotService from "./iotService.js";
 
+// Fetch current device state (devices.status, fans.speed_level/mode, lights.intensity/color)
+const getDeviceState = async (device_id, db = supabase) => {
+    const state = { device: null, fan: null, light: null };
+    try {
+        const { data: device } = await db.from("devices").select("id, type, status").eq("id", device_id).limit(1).single();
+        state.device = device || null;
+    } catch (e) {
+        state.device = null;
+    }
+
+    try {
+        const { data: fan } = await db.from("fans").select("device_id, speed_level, mode").eq("device_id", device_id).limit(1).single();
+        state.fan = fan || null;
+    } catch (e) {
+        state.fan = null;
+    }
+
+    try {
+        const { data: light } = await db.from("lights").select("device_id, intensity, color").eq("device_id", device_id).limit(1).single();
+        state.light = light || null;
+    } catch (e) {
+        state.light = null;
+    }
+
+    return state;
+};
+
+// Publish only if desired state differs from current device state
+const publishIfDifferent = async ({ device_id, action, value, db = supabase }) => {
+    try {
+        const st = await getDeviceState(device_id, db);
+        const act = (action || "").toLowerCase();
+
+        if (act === "speed") {
+            const cur = st.fan && typeof st.fan.speed_level === 'number' ? st.fan.speed_level : null;
+            if (cur !== null && Number(cur) === Number(value)) {
+                console.log(`[sensorService] skip publish: fan ${device_id} already at speed ${value}`);
+                return { skipped: true };
+            }
+        } else if (act === "power") {
+            const cur = st.device && typeof st.device.status === 'number' ? st.device.status : null;
+            if (cur !== null && Number(cur) === Number(value)) {
+                console.log(`[sensorService] skip publish: device ${device_id} power already ${value}`);
+                return { skipped: true };
+            }
+        } else if (act === "mode") {
+            const cur = st.fan && st.fan.mode ? String(st.fan.mode) : null;
+            if (cur !== null && String(cur) === String(value)) {
+                console.log(`[sensorService] skip publish: fan ${device_id} mode already ${value}`);
+                return { skipped: true };
+            }
+        } else if (act === "color") {
+            const cur = st.light && st.light.color ? String(st.light.color) : null;
+            if (cur !== null && String(cur) === String(value)) {
+                console.log(`[sensorService] skip publish: light ${device_id} color already ${value}`);
+                return { skipped: true };
+            }
+        } else if (act === "intensity") {
+            const cur = st.light && typeof st.light.intensity === 'number' ? st.light.intensity : null;
+            if (cur !== null && Number(cur) === Number(value)) {
+                console.log(`[sensorService] skip publish: light ${device_id} intensity already ${value}`);
+                return { skipped: true };
+            }
+        }
+    } catch (e) {
+        console.warn(`[sensorService] failed to check device state for device ${device_id}:`, e.message || e);
+    }
+
+    return await iotService.publishCommandForDevice({ device_id, action, value, db });
+};
+
+
 const OPERATORS = {
     ">": (a, b) => a > b,
     "<": (a, b) => a < b,
@@ -102,24 +174,20 @@ export const processReadings = async ({ feed, readings, db = supabase }) => {
             .from("automation_rules")
             .select("id, name, is_active")
             .eq("is_active", true);
-
         if (!rules || rules.length === 0) return { processed: 0 };
 
-        // fetch conditions and actions for all rules in parallel
+        // load conditions, actions, devices, schedules
         const ruleMap = {};
         for (const r of rules) {
             ruleMap[r.id] = { meta: r, conditions: [], actions: [], devices: [], schedules: [] };
         }
-
         const ruleIds = Object.keys(ruleMap).map(id => Number(id));
-
         const [{ data: conds }, { data: acts }, { data: devs }, { data: schs }] = await Promise.all([
             db.from("rule_conditions").select("id, rule_id, sensor_type, operator, value").in("rule_id", ruleIds),
             db.from("rule_actions").select("id, rule_id, action, value").in("rule_id", ruleIds),
             db.from("rule_devices").select("rule_id, device_id").in("rule_id", ruleIds),
             db.from("rule_schedules").select("id, rule_id, start_time, end_time, start_date, end_date").in("rule_id", ruleIds)
         ]);
-
         for (const c of conds || []) {
             if (ruleMap[c.rule_id]) ruleMap[c.rule_id].conditions.push(c);
         }
@@ -132,7 +200,6 @@ export const processReadings = async ({ feed, readings, db = supabase }) => {
         for (const s of schs || []) {
             if (ruleMap[s.rule_id]) ruleMap[s.rule_id].schedules.push(s);
         }
-
         let processed = 0;
 
         // evaluate each rule
@@ -231,12 +298,12 @@ export const processReadings = async ({ feed, readings, db = supabase }) => {
                         if (computedSpeed !== null && actionName !== "speed") {
                             if (["turn_on", "switch_on", "power", "toggle", "on", "start"].includes(actionName)) {
                                 console.log(`[sensorService] publishing computed speed ${computedSpeed} for device ${device_id} (action ${actionName})`);
-                                await iotService.publishCommandForDevice({ device_id, action: "speed", value: computedSpeed });
+                                await publishIfDifferent({ device_id, action: "speed", value: computedSpeed, db });
                                 continue;
                             }
                             if (["turn_off", "switch_off", "off", "stop"].includes(actionName)) {
                                 console.log(`[sensorService] publishing computed speed 0 for device ${device_id} (action ${actionName})`);
-                                await iotService.publishCommandForDevice({ device_id, action: "speed", value: 0 });
+                                await publishIfDifferent({ device_id, action: "speed", value: 0, db });
                                 continue;
                             }
                         }
@@ -252,17 +319,17 @@ export const processReadings = async ({ feed, readings, db = supabase }) => {
                                 publishValue = computed;
                             }
 
-                            await iotService.publishCommandForDevice({ device_id, action: "speed", value: publishValue });
+                            await publishIfDifferent({ device_id, action: "speed", value: publishValue, db });
                         } else if (actionName === "power") {
                             const vnum = toNumberOrNull(action.value);
                             if (vnum === null) continue;
-                            await iotService.publishCommandForDevice({ device_id, action: "power", value: vnum });
+                            await publishIfDifferent({ device_id, action: "power", value: vnum, db });
                         } else if (actionName === "mode") {
                             const v = action.value || "";
-                            await iotService.publishCommandForDevice({ device_id, action: "mode", value: v });
+                            await publishIfDifferent({ device_id, action: "mode", value: v, db });
                         } else {
                             // generic fallback: publish whatever the action says
-                            await iotService.publishCommandForDevice({ device_id, action: action.action, value: action.value });
+                            await publishIfDifferent({ device_id, action: action.action, value: action.value, db });
                         }
                     } catch (err) {
                         console.error("[sensorService] action publish error:", err.message || err);

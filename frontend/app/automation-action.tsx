@@ -11,12 +11,39 @@ const deviceConfig: Record<string, { name: string; image: any; width: number; he
 };
 
 export default function AutomationActionScreen() {
-  const params = useLocalSearchParams<{ type?: string }>();
-  const deviceType = (params.type ?? 'ac').toLowerCase();
+  const params = useLocalSearchParams<{
+    type?: string;
+    selectedType?: string;
+    selected?: string;
+    tempComparator?: '<' | '=' | '>';
+    humidityComparator?: '<' | '=' | '>';
+    temperature?: string;
+    humidity?: string;
+    start_time?: string;
+    end_time?: string;
+    start_date?: string;
+    end_date?: string;
+  }>();
+  const deviceType = (params.selectedType ?? params.type ?? 'ac').toLowerCase();
   const device = useMemo(() => deviceConfig[deviceType] || deviceConfig.ac, [deviceType]);
 
   const goToAutomationCompose = (action: 'off' | 'on') => {
-    router.replace({ pathname: '/(tabs)/automation', params: { compose: '1', action } });
+    router.replace({
+      pathname: '/(tabs)/automation',
+      params: {
+        compose: '1',
+        action,
+        selected: params.selected ?? '',
+        tempComparator: params.tempComparator ?? '<',
+        humidityComparator: params.humidityComparator ?? '<',
+        temperature: params.temperature ?? '27',
+        humidity: params.humidity ?? '5',
+        start_time: params.start_time ?? '',
+        end_time: params.end_time ?? '',
+        start_date: params.start_date ?? '',
+        end_date: params.end_date ?? '',
+      },
+    });
   };
 
   return (

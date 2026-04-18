@@ -17,6 +17,11 @@ export default function RootLayout() {
       <Stack initialRouteName="login">
         <Stack.Screen name="signup" options={{ headerShown: false }} />
         <Stack.Screen name="login" options={{ headerShown: false }} />
+        <Stack.Screen name="forgot-password" options={{ headerShown: false }} />
+        <Stack.Screen name="forgot-password-verify" options={{ headerShown: false }} />
+        <Stack.Screen name="reset-password" options={{ headerShown: false }} />
+        <Stack.Screen name="forgot-password-new-password" options={{ headerShown: false }} />
+        <Stack.Screen name="forgot-password-success" options={{ headerShown: false }} />
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="add-device" options={{ headerShown: false }} />
         <Stack.Screen name="scan-device" options={{ headerShown: false }} />

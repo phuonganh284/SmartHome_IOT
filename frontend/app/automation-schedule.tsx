@@ -1,4 +1,4 @@
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import {
   Keyboard,
@@ -33,6 +33,15 @@ const toMonthStart = (date: Date) => new Date(date.getFullYear(), date.getMonth(
 const toDateOnly = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate());
 
 export default function AutomationScheduleScreen() {
+  const params = useLocalSearchParams<{
+    category?: string;
+    selected?: string;
+    selectedType?: string;
+    tempComparator?: '<' | '=' | '>';
+    humidityComparator?: '<' | '=' | '>';
+    temperature?: string;
+    humidity?: string;
+  }>();
   const today = useMemo(() => new Date(), []);
   const [visibleMonth, setVisibleMonth] = useState<Date>(() => toMonthStart(today));
   const [rangeStart, setRangeStart] = useState<Date | null>(today);
@@ -124,6 +133,47 @@ export default function AutomationScheduleScreen() {
       hideSub.remove();
     };
   }, []);
+
+  const to24Hour = (time: string, meridiem: string) => {
+    const [hourPart, minutePart] = time.split(':');
+    const hourRaw = Number(hourPart);
+    const minuteRaw = Number(minutePart);
+    const safeMinute = Number.isNaN(minuteRaw) ? 0 : Math.max(0, Math.min(59, minuteRaw));
+    let safeHour = Number.isNaN(hourRaw) ? 0 : Math.max(1, Math.min(12, hourRaw));
+
+    const isPM = meridiem.trim().toUpperCase() === 'PM';
+    if (isPM && safeHour < 12) safeHour += 12;
+    if (!isPM && safeHour === 12) safeHour = 0;
+
+    return `${String(safeHour).padStart(2, '0')}:${String(safeMinute).padStart(2, '0')}:00`;
+  };
+
+  const formatDate = (value: Date | null) => {
+    if (!value) return '';
+    const y = value.getFullYear();
+    const m = String(value.getMonth() + 1).padStart(2, '0');
+    const d = String(value.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  };
+
+  const handleContinue = () => {
+    router.push({
+      pathname: '/automation-action',
+      params: {
+        category: params.category ?? '',
+        selected: params.selected ?? '',
+        selectedType: params.selectedType ?? '',
+        tempComparator: params.tempComparator ?? '<',
+        humidityComparator: params.humidityComparator ?? '<',
+        temperature: params.temperature ?? '27',
+        humidity: params.humidity ?? '5',
+        start_time: to24Hour(onTime, onMeridiem),
+        end_time: to24Hour(offTime, offMeridiem),
+        start_date: formatDate(rangeStart),
+        end_date: formatDate(rangeEnd ?? rangeStart),
+      },
+    });
+  };
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -261,7 +311,7 @@ export default function AutomationScheduleScreen() {
           </View>
 
           {!keyboardVisible && (
-            <Pressable style={styles.continueButton} onPress={() => router.push('/automation-action')}>
+            <Pressable style={styles.continueButton} onPress={handleContinue}>
               <Text style={styles.continueText}>Continue</Text>
             </Pressable>
           )}

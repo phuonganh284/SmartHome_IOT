@@ -133,8 +133,28 @@ create table rule_schedules (
 );
 
 
+---------------------------------------- 3. NOTIFICATIONS -----------------------------------------------
 
----------------------------------------- 3. TRIGGER -----------------------------------------------
+-- NOTIFICATIONS (for automation rule executions)
+create table notifications (
+    id bigint generated always as identity primary key,
+    user_id uuid references users(id) on delete cascade,
+    rule_id bigint references automation_rules(id) on delete cascade,
+    device_id bigint references devices(id) on delete cascade,
+    message varchar(255),
+    action varchar(50),   -- "turn_on", "turn_off"
+    read boolean default false,
+    created_at timestamp default now()
+);
+
+create index idx_notifications_user_created 
+on notifications(user_id, created_at desc);
+
+create index idx_notifications_device_created 
+on notifications(device_id, created_at desc);
+
+
+
 create function handle_new_user()
 returns trigger as $$
 begin

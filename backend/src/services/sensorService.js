@@ -200,6 +200,7 @@ export const processReadings = async ({ feed, readings, db = supabase }) => {
         for (const s of schs || []) {
             if (ruleMap[s.rule_id]) ruleMap[s.rule_id].schedules.push(s);
         }
+
         let processed = 0;
 
         // evaluate each rule

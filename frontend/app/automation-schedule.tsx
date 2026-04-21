@@ -1,6 +1,7 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import {
+  Alert,
   Keyboard,
   KeyboardAvoidingView,
   Pressable,
@@ -32,8 +33,54 @@ const weekDayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const toMonthStart = (date: Date) => new Date(date.getFullYear(), date.getMonth(), 1);
 const toDateOnly = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate());
 
+const parseIsoDate = (value?: string) => {
+  if (!value) return null;
+  const [y, m, d] = value.split('-').map((part) => Number(part));
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return null;
+  return new Date(y, m - 1, d);
+};
+
+const parseTimeTo12h = (value?: string, fallbackTime = '10:27', fallbackMeridiem: 'AM' | 'PM' = 'PM') => {
+  if (!value) return { time: fallbackTime, meridiem: fallbackMeridiem };
+  const [hourPart, minutePart] = value.split(':');
+  const h24 = Number(hourPart);
+  const m = Number(minutePart);
+  if (!Number.isFinite(h24) || !Number.isFinite(m)) {
+    return { time: fallbackTime, meridiem: fallbackMeridiem };
+  }
+
+  const meridiem: 'AM' | 'PM' = h24 >= 12 ? 'PM' : 'AM';
+  const hour12 = h24 % 12 === 0 ? 12 : h24 % 12;
+  return {
+    time: `${String(hour12).padStart(2, '0')}:${String(Math.max(0, Math.min(59, m))).padStart(2, '0')}`,
+    meridiem,
+  };
+};
+
+const isValidTime = (value: string) => {
+  const match = value.match(/^(\d{2}):(\d{2})$/);
+  if (!match) return false;
+
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return false;
+  if (hour < 0 || hour > 23) return false;
+  if (minute < 0 || minute > 59) return false;
+
+  return true;
+};
+
+const isValidMeridiem = (value: string) => {
+  const normalized = value.trim().toUpperCase();
+  return normalized === 'AM' || normalized === 'PM';
+};
+
 export default function AutomationScheduleScreen() {
   const params = useLocalSearchParams<{
+    taskId?: string;
+    taskName?: string;
+    action?: string;
     category?: string;
     selected?: string;
     selectedType?: string;
@@ -41,15 +88,24 @@ export default function AutomationScheduleScreen() {
     humidityComparator?: '<' | '=' | '>';
     temperature?: string;
     humidity?: string;
+    start_time?: string;
+    end_time?: string;
+    start_date?: string;
+    end_date?: string;
   }>();
   const today = useMemo(() => new Date(), []);
-  const [visibleMonth, setVisibleMonth] = useState<Date>(() => toMonthStart(today));
-  const [rangeStart, setRangeStart] = useState<Date | null>(today);
-  const [rangeEnd, setRangeEnd] = useState<Date | null>(null);
-  const [onTime, setOnTime] = useState('10:27');
-  const [onMeridiem, setOnMeridiem] = useState('PM');
-  const [offTime, setOffTime] = useState('07:30');
-  const [offMeridiem, setOffMeridiem] = useState('AM');
+  const startSeed = useMemo(() => parseIsoDate(params.start_date) || today, [params.start_date, today]);
+  const endSeed = useMemo(() => parseIsoDate(params.end_date), [params.end_date]);
+  const startTimeSeed = useMemo(() => parseTimeTo12h(params.start_time, '10:27', 'PM'), [params.start_time]);
+  const endTimeSeed = useMemo(() => parseTimeTo12h(params.end_time, '07:30', 'AM'), [params.end_time]);
+
+  const [visibleMonth, setVisibleMonth] = useState<Date>(() => toMonthStart(startSeed));
+  const [rangeStart, setRangeStart] = useState<Date | null>(startSeed);
+  const [rangeEnd, setRangeEnd] = useState<Date | null>(endSeed);
+  const [onTime, setOnTime] = useState(startTimeSeed.time);
+  const [onMeridiem, setOnMeridiem] = useState<string>(startTimeSeed.meridiem);
+  const [offTime, setOffTime] = useState(endTimeSeed.time);
+  const [offMeridiem, setOffMeridiem] = useState<string>(endTimeSeed.meridiem);
   const [activeTimeGroup, setActiveTimeGroup] = useState<'on' | 'off' | null>(null);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
 
@@ -138,6 +194,13 @@ export default function AutomationScheduleScreen() {
     const [hourPart, minutePart] = time.split(':');
     const hourRaw = Number(hourPart);
     const minuteRaw = Number(minutePart);
+
+    // If user entered 24-hour format, keep it directly.
+    if (Number.isFinite(hourRaw) && hourRaw >= 13 && hourRaw <= 23) {
+      const safeMinute = Number.isNaN(minuteRaw) ? 0 : Math.max(0, Math.min(59, minuteRaw));
+      return `${String(hourRaw).padStart(2, '0')}:${String(safeMinute).padStart(2, '0')}:00`;
+    }
+
     const safeMinute = Number.isNaN(minuteRaw) ? 0 : Math.max(0, Math.min(59, minuteRaw));
     let safeHour = Number.isNaN(hourRaw) ? 0 : Math.max(1, Math.min(12, hourRaw));
 
@@ -157,9 +220,22 @@ export default function AutomationScheduleScreen() {
   };
 
   const handleContinue = () => {
+    if (!isValidTime(onTime) || !isValidTime(offTime)) {
+      Alert.alert('Invalid time', 'Please enter valid time in HH:MM format (00:00 to 23:59).');
+      return;
+    }
+
+    if (!isValidMeridiem(onMeridiem) || !isValidMeridiem(offMeridiem)) {
+      Alert.alert('Invalid period', 'Please use AM or PM.');
+      return;
+    }
+
     router.push({
       pathname: '/automation-action',
       params: {
+        taskId: params.taskId ?? '',
+        taskName: params.taskName ?? '',
+        action: params.action ?? '',
         category: params.category ?? '',
         selected: params.selected ?? '',
         selectedType: params.selectedType ?? '',
@@ -197,7 +273,7 @@ export default function AutomationScheduleScreen() {
 
               <View style={styles.timeRow}>
                 <View style={styles.timeGroup}>
-                  <Text style={styles.timeLabel}>On Time</Text>
+                  <Text style={styles.timeLabel}>Start Time</Text>
                   <View style={styles.timeInputRow}>
                     <View style={[styles.timeBox, activeTimeGroup === 'on' && styles.timeBoxActive]}>
                       <TextInput
@@ -212,7 +288,7 @@ export default function AutomationScheduleScreen() {
                     <View style={[styles.timeBox, activeTimeGroup === 'on' && styles.timeBoxActive]}>
                       <TextInput
                         value={onMeridiem}
-                        onChangeText={(value) => setOnMeridiem(value.toUpperCase())}
+                        onChangeText={setOnMeridiem}
                         onFocus={() => setActiveTimeGroup('on')}
                         style={[styles.timeInput, activeTimeGroup === 'on' && styles.timeBoxTextActive]}
                         autoCapitalize="characters"
@@ -223,7 +299,7 @@ export default function AutomationScheduleScreen() {
                 </View>
 
                 <View style={styles.timeGroup}>
-                  <Text style={styles.timeLabel}>Off Time</Text>
+                  <Text style={styles.timeLabel}>End Time</Text>
                   <View style={styles.timeInputRow}>
                     <View style={[styles.timeBox, activeTimeGroup === 'off' && styles.timeBoxActive]}>
                       <TextInput
@@ -238,7 +314,7 @@ export default function AutomationScheduleScreen() {
                     <View style={[styles.timeBox, activeTimeGroup === 'off' && styles.timeBoxActive]}>
                       <TextInput
                         value={offMeridiem}
-                        onChangeText={(value) => setOffMeridiem(value.toUpperCase())}
+                        onChangeText={setOffMeridiem}
                         onFocus={() => setActiveTimeGroup('off')}
                         style={[styles.timeInput, activeTimeGroup === 'off' && styles.timeBoxTextActive]}
                         autoCapitalize="characters"

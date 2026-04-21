@@ -82,6 +82,10 @@ export default function AutomationConditionScreen() {
     taskId?: string;
     taskName?: string;
     action?: string;
+    start_time?: string;
+    end_time?: string;
+    start_date?: string;
+    end_date?: string;
     tempComparator?: Comparator;
     humidityComparator?: Comparator;
     temperature?: string;
@@ -116,6 +120,9 @@ export default function AutomationConditionScreen() {
     router.push({
       pathname: '/automation-schedule',
       params: {
+        taskId: params.taskId ?? '',
+        taskName: params.taskName ?? '',
+        action: params.action ?? '',
         category: params.category ?? '',
         selected: params.selected ?? '',
         selectedType: params.selectedType ?? '',
@@ -123,6 +130,10 @@ export default function AutomationConditionScreen() {
         humidityComparator,
         temperature: String(temperature),
         humidity: String(humidity),
+        start_time: params.start_time ?? '',
+        end_time: params.end_time ?? '',
+        start_date: params.start_date ?? '',
+        end_date: params.end_date ?? '',
       },
     });
   };

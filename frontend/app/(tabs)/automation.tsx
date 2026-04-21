@@ -2,12 +2,17 @@ import { Image } from 'expo-image';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, SafeAreaView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { automationAPI, type AutomationRule } from '@/services/api';
+import { automationAPI, deviceAPI, type AutomationRule, type AutomationRulePayload, type Device } from '@/services/api';
+
+type RuleCategory = 'light' | 'fan';
+
+type DeviceLookup = Record<number, Device>;
 
 type AutomationItem = {
   id: string;
   name: string;
   icon: any;
+  category: RuleCategory;
   rule: AutomationRule;
   config?: {
     action?: 'on' | 'off';
@@ -29,26 +34,90 @@ const parseSelectedDevices = (value?: string) => {
     .filter((id) => Number.isFinite(id) && id > 0);
 };
 
-const mapRuleToItem = (rule: AutomationRule): AutomationItem => {
-  const firstAction = rule.actions?.[0]?.action?.toLowerCase() || '';
-  const isOffAction = firstAction.includes('off');
+const getRuleCategoryFromType = (value?: string): RuleCategory => {
+  const normalized = (value || '').toLowerCase();
+  if (normalized.includes('fan') || normalized.includes('ac') || normalized.includes('air')) {
+    return 'fan';
+  }
+  return 'light';
+};
+
+const getRuleCategoryPrefix = (value?: string) => {
+  if (getRuleCategoryFromType(value) === 'fan') {
+    return 'fan rule';
+  }
+  return 'light rule';
+};
+
+const isAiRule = (name?: string | null): boolean => {
+  return (name || '').toLowerCase().startsWith('ai');
+};
+
+const getNextRuleNumber = (rules: AutomationRule[], prefix: string) => {
+  const pattern = new RegExp(`^${prefix}\\s+(\\d+)$`, 'i');
+  let max = 0;
+
+  rules.forEach((rule) => {
+    const match = (rule.name || '').trim().match(pattern);
+    if (!match) return;
+
+    const parsed = Number(match[1]);
+    if (Number.isFinite(parsed) && parsed > max) {
+      max = parsed;
+    }
+  });
+
+  return max + 1;
+};
+
+const toRulePayload = (rule: AutomationRule, name: string): AutomationRulePayload => ({
+  name,
+  devices: rule.devices || [],
+  conditions: (rule.conditions || []).map((item) => ({
+    sensor_type: item.sensor_type,
+    operator: item.operator,
+    value: item.value,
+  })),
+  actions: (rule.actions || []).map((item) => ({
+    action: item.action,
+    value: item.value ?? null,
+  })),
+  schedule: rule.schedules?.[0]
+    ? {
+        start_time: rule.schedules[0].start_time ?? null,
+        end_time: rule.schedules[0].end_time ?? null,
+        start_date: rule.schedules[0].start_date ?? null,
+        end_date: rule.schedules[0].end_date ?? null,
+      }
+    : null,
+});
+
+const mapRuleToItem = (rule: AutomationRule, devicesById: DeviceLookup): AutomationItem => {
+  const firstDevice = rule.devices?.[0] ? devicesById[rule.devices[0]] : undefined;
+  const category = getRuleCategoryFromType(firstDevice?.type);
 
   return {
     id: String(rule.id),
     name: rule.name || `Rule #${rule.id}`,
-    icon: isOffAction ? require('@/assets/images/Frame.png') : require('@/assets/images/Light.png'),
+    icon: category === 'fan' ? require('@/assets/images/Frame.png') : require('@/assets/images/Light.png'),
+    category,
     rule,
     config: {
-      action: isOffAction ? 'off' : 'on',
+      action: rule.actions?.[0]?.action?.toLowerCase().includes('off') ? 'off' : 'on',
     },
   };
 };
 
 export default function AutomationScreen() {
   const params = useLocalSearchParams<{
-    compose?: string | string[];
+    autoCreate?: string | string[];
+    autoUpdate?: string | string[];
+    ruleId?: string | string[];
+    ruleName?: string | string[];
     action?: string | string[];
     selected?: string | string[];
+    selectedType?: string | string[];
+    category?: string | string[];
     tempComparator?: string | string[];
     humidityComparator?: string | string[];
     temperature?: string | string[];
@@ -59,18 +128,71 @@ export default function AutomationScreen() {
     end_date?: string | string[];
   }>();
   const inputRef = useRef<TextInput>(null);
-  const [activeMode, setActiveMode] = useState<'manual' | 'ai'>('manual');
+  const [activeCategory, setActiveCategory] = useState<RuleCategory>('light');
   const [items, setItems] = useState<AutomationItem[]>([]);
   const [switches, setSwitches] = useState<Record<string, boolean>>({});
   const [showComposer, setShowComposer] = useState(false);
   const [taskName, setTaskName] = useState('');
+  const [renameRuleId, setRenameRuleId] = useState<string | null>(null);
+  const [isSavingName, setIsSavingName] = useState(false);
+  const [isAutoCreating, setIsAutoCreating] = useState(false);
+  const [updatingSwitches, setUpdatingSwitches] = useState<Record<string, boolean>>({});
   const [deleteMode, setDeleteMode] = useState(false);
   const [selectedTasks, setSelectedTasks] = useState<Record<string, boolean>>({});
+  const processedAutoCreateKeyRef = useRef<string>('');
+  const processedAutoUpdateKeyRef = useRef<string>('');
 
   const loadRules = useCallback(async () => {
     try {
-      const rules = await automationAPI.getRules();
-      const nextItems = rules.map(mapRuleToItem);
+      const [rules, devices] = await Promise.all([automationAPI.getRules(), deviceAPI.getDevices()]);
+      const devicesById: DeviceLookup = {};
+      devices.forEach((device) => {
+        devicesById[device.id] = device;
+      });
+
+      // Create AI rules for devices that don't have them
+      const aiRulesByDevice = new Map<number, boolean>();
+      rules.forEach((rule) => {
+        if (isAiRule(rule.name)) {
+          rule.devices?.forEach((deviceId) => {
+            aiRulesByDevice.set(deviceId, true);
+          });
+        }
+      });
+
+      for (const device of devices) {
+        if (!aiRulesByDevice.has(device.id)) {
+          try {
+            const category = getRuleCategoryFromType(device.type);
+            const aiRuleName = `AI rule - ${device.name || `Device ${device.id}`}`;
+            await automationAPI.createRule({
+              name: aiRuleName,
+              devices: [device.id],
+              conditions: [
+                {
+                  sensor_type: 'temperature',
+                  operator: '<',
+                  value: 27,
+                },
+                {
+                  sensor_type: 'humidity',
+                  operator: '<',
+                  value: 5,
+                },
+              ],
+              actions: [{ action: 'turn_on', value: null }],
+              schedule: null,
+            });
+          } catch (err) {
+            // Silently skip if AI rule creation fails
+            console.warn(`Failed to create AI rule for device ${device.id}:`, err);
+          }
+        }
+      }
+
+      // Reload rules after creating AI rules
+      const updatedRules = await automationAPI.getRules();
+      const nextItems = updatedRules.map((rule) => mapRuleToItem(rule, devicesById));
       const nextSwitches: Record<string, boolean> = {};
 
       nextItems.forEach((item) => {
@@ -79,6 +201,14 @@ export default function AutomationScreen() {
 
       setItems(nextItems);
       setSwitches(nextSwitches);
+
+      const hasLight = nextItems.some((item) => item.category === 'light');
+      const hasFan = nextItems.some((item) => item.category === 'fan');
+      setActiveCategory((prev) => {
+        if (prev === 'light' && !hasLight && hasFan) return 'fan';
+        if (prev === 'fan' && !hasFan && hasLight) return 'light';
+        return prev;
+      });
     } catch (error) {
       Alert.alert('Cannot load automations', error instanceof Error ? error.message : 'Unknown error');
     }
@@ -91,85 +221,306 @@ export default function AutomationScreen() {
   );
 
   useEffect(() => {
-    if (toSingleParam(params.compose) === '1') {
-      setShowComposer(true);
-      setTimeout(() => inputRef.current?.focus(), 120);
-      router.setParams({
-        compose: undefined,
-        action: undefined,
-        selected: undefined,
-        tempComparator: undefined,
-        humidityComparator: undefined,
-        temperature: undefined,
-        humidity: undefined,
-        start_time: undefined,
-        end_time: undefined,
-        start_date: undefined,
-        end_date: undefined,
-      });
+    if (toSingleParam(params.autoCreate) !== '1') {
+      return;
     }
-  }, [params.compose]);
+
+    const action = toSingleParam(params.action) || '';
+    const selected = toSingleParam(params.selected) || '';
+    const selectedType = toSingleParam(params.selectedType) || toSingleParam(params.category) || '';
+    const tempComparator = toSingleParam(params.tempComparator) || '<';
+    const humidityComparator = toSingleParam(params.humidityComparator) || '<';
+    const temperature = toSingleParam(params.temperature) || '27';
+    const humidity = toSingleParam(params.humidity) || '5';
+    const startTime = toSingleParam(params.start_time) || '';
+    const endTime = toSingleParam(params.end_time) || '';
+    const startDate = toSingleParam(params.start_date) || '';
+    const endDate = toSingleParam(params.end_date) || '';
+
+    const createKey = [
+      action,
+      selected,
+      selectedType,
+      tempComparator,
+      humidityComparator,
+      temperature,
+      humidity,
+      startTime,
+      endTime,
+      startDate,
+      endDate,
+    ].join('|');
+
+    if (!createKey || processedAutoCreateKeyRef.current === createKey) {
+      return;
+    }
+
+    processedAutoCreateKeyRef.current = createKey;
+
+    const createRuleNow = async () => {
+      const selectedDevices = parseSelectedDevices(selected);
+      if (selectedDevices.length === 0) {
+        Alert.alert('Missing devices', 'Please select at least one device before creating automation.');
+        return;
+      }
+
+      const nextAction = action === 'off' ? 'turn_off' : 'turn_on';
+      const nextTemperature = Number(temperature);
+      const nextHumidity = Number(humidity);
+
+      try {
+        setIsAutoCreating(true);
+        const existingRules = await automationAPI.getRules();
+        const prefix = getRuleCategoryPrefix(selectedType);
+        const defaultName = `${prefix} ${getNextRuleNumber(existingRules, prefix)}`;
+
+        const created = await automationAPI.createRule({
+          name: defaultName,
+          devices: selectedDevices,
+          conditions: [
+            {
+              sensor_type: 'temperature',
+              operator: toComparator(tempComparator),
+              value: Number.isFinite(nextTemperature) ? nextTemperature : 27,
+            },
+            {
+              sensor_type: 'humidity',
+              operator: toComparator(humidityComparator),
+              value: Number.isFinite(nextHumidity) ? nextHumidity : 5,
+            },
+          ],
+          actions: [{ action: nextAction, value: null }],
+          schedule:
+            startTime && endTime
+              ? {
+                  start_time: startTime,
+                  end_time: endTime,
+                  start_date: startDate || null,
+                  end_date: endDate || null,
+                }
+              : null,
+        });
+
+        await loadRules();
+        setRenameRuleId(String(created.id));
+        setTaskName(defaultName);
+        setShowComposer(true);
+        setTimeout(() => inputRef.current?.focus(), 120);
+
+        router.setParams({
+          autoCreate: undefined,
+          action: undefined,
+          selected: undefined,
+          selectedType: undefined,
+          category: undefined,
+          tempComparator: undefined,
+          humidityComparator: undefined,
+          temperature: undefined,
+          humidity: undefined,
+          start_time: undefined,
+          end_time: undefined,
+          start_date: undefined,
+          end_date: undefined,
+        });
+      } catch (error) {
+        Alert.alert('Create automation failed', error instanceof Error ? error.message : 'Unknown error');
+      } finally {
+        setIsAutoCreating(false);
+      }
+    };
+
+    void createRuleNow();
+  }, [
+    params.autoCreate,
+    params.action,
+    params.selected,
+    params.selectedType,
+    params.category,
+    params.tempComparator,
+    params.humidityComparator,
+    params.temperature,
+    params.humidity,
+    params.start_time,
+    params.end_time,
+    params.start_date,
+    params.end_date,
+    loadRules,
+  ]);
+
+  useEffect(() => {
+    if (toSingleParam(params.autoUpdate) !== '1') {
+      return;
+    }
+
+    const ruleId = toSingleParam(params.ruleId) || '';
+    const action = toSingleParam(params.action) || '';
+    const selected = toSingleParam(params.selected) || '';
+    const selectedType = toSingleParam(params.selectedType) || toSingleParam(params.category) || '';
+    const tempComparator = toSingleParam(params.tempComparator) || '<';
+    const humidityComparator = toSingleParam(params.humidityComparator) || '<';
+    const temperature = toSingleParam(params.temperature) || '27';
+    const humidity = toSingleParam(params.humidity) || '5';
+    const startTime = toSingleParam(params.start_time) || '';
+    const endTime = toSingleParam(params.end_time) || '';
+    const startDate = toSingleParam(params.start_date) || '';
+    const endDate = toSingleParam(params.end_date) || '';
+
+    const updateKey = [
+      ruleId,
+      action,
+      selected,
+      selectedType,
+      tempComparator,
+      humidityComparator,
+      temperature,
+      humidity,
+      startTime,
+      endTime,
+      startDate,
+      endDate,
+    ].join('|');
+
+    if (!ruleId || processedAutoUpdateKeyRef.current === updateKey) {
+      return;
+    }
+
+    processedAutoUpdateKeyRef.current = updateKey;
+
+    const updateRuleNow = async () => {
+      const selectedDevices = parseSelectedDevices(selected);
+      if (selectedDevices.length === 0) {
+        Alert.alert('Missing devices', 'Please select at least one device before updating automation.');
+        return;
+      }
+
+      const nextAction = action === 'off' ? 'turn_off' : 'turn_on';
+      const nextTemperature = Number(temperature);
+      const nextHumidity = Number(humidity);
+      const current = items.find((item) => item.id === ruleId)?.rule;
+      const fallbackName =
+        toSingleParam(params.ruleName) || current?.name || `${getRuleCategoryPrefix(selectedType)} ${ruleId}`;
+
+      try {
+        await automationAPI.updateRule(ruleId, {
+          name: fallbackName,
+          devices: selectedDevices,
+          conditions: [
+            {
+              sensor_type: 'temperature',
+              operator: toComparator(tempComparator),
+              value: Number.isFinite(nextTemperature) ? nextTemperature : 27,
+            },
+            {
+              sensor_type: 'humidity',
+              operator: toComparator(humidityComparator),
+              value: Number.isFinite(nextHumidity) ? nextHumidity : 5,
+            },
+          ],
+          actions: [{ action: nextAction, value: null }],
+          schedule:
+            startTime && endTime
+              ? {
+                  start_time: startTime,
+                  end_time: endTime,
+                  start_date: startDate || null,
+                  end_date: endDate || null,
+                }
+              : null,
+        });
+
+        await loadRules();
+        router.setParams({
+          autoUpdate: undefined,
+          ruleId: undefined,
+          ruleName: undefined,
+          action: undefined,
+          selected: undefined,
+          selectedType: undefined,
+          category: undefined,
+          tempComparator: undefined,
+          humidityComparator: undefined,
+          temperature: undefined,
+          humidity: undefined,
+          start_time: undefined,
+          end_time: undefined,
+          start_date: undefined,
+          end_date: undefined,
+        });
+      } catch (error) {
+        Alert.alert('Update automation failed', error instanceof Error ? error.message : 'Unknown error');
+      }
+    };
+
+    void updateRuleNow();
+  }, [
+    params.autoUpdate,
+    params.ruleId,
+    params.ruleName,
+    params.action,
+    params.selected,
+    params.selectedType,
+    params.category,
+    params.tempComparator,
+    params.humidityComparator,
+    params.temperature,
+    params.humidity,
+    params.start_time,
+    params.end_time,
+    params.start_date,
+    params.end_date,
+    items,
+    loadRules,
+  ]);
 
   useEffect(() => {
     setDeleteMode(false);
     setSelectedTasks({});
     setShowComposer(false);
-  }, [activeMode]);
+  }, [activeCategory]);
 
-  const handleCompleteTask = async () => {
-    const name = taskName.trim();
-    if (!name) {
+  const filteredItems = useMemo(
+    () => items.filter((item) => item.category === activeCategory),
+    [items, activeCategory]
+  );
+
+  const handleSaveName = async () => {
+    const ruleId = renameRuleId;
+    const nextName = taskName.trim();
+
+    if (!ruleId) {
+      setShowComposer(false);
       return;
     }
 
-    const selected = parseSelectedDevices(toSingleParam(params.selected));
-    if (selected.length === 0) {
-      Alert.alert('Missing devices', 'Please select at least one device before creating automation.');
+    if (!nextName) {
+      Alert.alert('Name required', 'Please enter a name for this rule.');
       return;
     }
 
-    const action = toSingleParam(params.action) === 'off' ? 'turn_off' : 'turn_on';
-    const temperature = Number(toSingleParam(params.temperature) || '27');
-    const humidity = Number(toSingleParam(params.humidity) || '5');
-    const startTime = toSingleParam(params.start_time);
-    const endTime = toSingleParam(params.end_time);
-    const startDate = toSingleParam(params.start_date);
-    const endDate = toSingleParam(params.end_date);
+    const targetRule = items.find((item) => item.id === ruleId)?.rule;
+    if (!targetRule) {
+      Alert.alert('Rule not found', 'Cannot rename this rule right now. Please refresh and try again.');
+      return;
+    }
 
     try {
-      await automationAPI.createRule({
-        name,
-        devices: selected,
-        conditions: [
-          {
-            sensor_type: 'temperature',
-            operator: toComparator(toSingleParam(params.tempComparator)),
-            value: Number.isFinite(temperature) ? temperature : 27,
-          },
-          {
-            sensor_type: 'humidity',
-            operator: toComparator(toSingleParam(params.humidityComparator)),
-            value: Number.isFinite(humidity) ? humidity : 5,
-          },
-        ],
-        actions: [{ action, value: null }],
-        schedule:
-          startTime && endTime
-            ? {
-                start_time: startTime,
-                end_time: endTime,
-                start_date: startDate || null,
-                end_date: endDate || null,
-              }
-            : null,
-      });
-
-      setTaskName('');
-      setShowComposer(false);
+      setIsSavingName(true);
+      await automationAPI.updateRule(ruleId, toRulePayload(targetRule, nextName));
       await loadRules();
+      setShowComposer(false);
+      setRenameRuleId(null);
+      setTaskName('');
     } catch (error) {
-      Alert.alert('Create automation failed', error instanceof Error ? error.message : 'Unknown error');
+      Alert.alert('Rename failed', error instanceof Error ? error.message : 'Unknown error');
+    } finally {
+      setIsSavingName(false);
     }
+  };
+
+  const handleKeepDefaultName = () => {
+    setShowComposer(false);
+    setRenameRuleId(null);
+    setTaskName('');
   };
 
   const toggleSelectedTask = (taskId: string) => {
@@ -177,6 +528,11 @@ export default function AutomationScreen() {
   };
 
   const enterDeleteMode = (taskId: string) => {
+    const item = items.find((i) => i.id === taskId);
+    if (item && isAiRule(item.name)) {
+      Alert.alert('Cannot Delete', 'AI rules cannot be deleted.');
+      return;
+    }
     setDeleteMode(true);
     setSelectedTasks((prev) => ({ ...prev, [taskId]: true }));
   };
@@ -204,14 +560,65 @@ export default function AutomationScreen() {
   );
 
   const openTaskDevices = (item: AutomationItem) => {
+    if (isAiRule(item.name)) {
+      Alert.alert('Cannot Edit', 'AI rules cannot be edited.');
+      return;
+    }
+
+    const conditionTemp = item.rule.conditions.find((condition) => condition.sensor_type === 'temperature');
+    const conditionHumidity = item.rule.conditions.find((condition) => condition.sensor_type === 'humidity');
+    const schedule = item.rule.schedules?.[0];
+
     router.push({
       pathname: '/automation-create',
       params: {
         taskId: item.id,
         taskName: item.name,
         action: item.config?.action,
+        selected: (item.rule.devices || []).join(','),
+        selectedType: item.category,
+        category: item.category,
+        tempComparator: conditionTemp?.operator || '<',
+        humidityComparator: conditionHumidity?.operator || '<',
+        temperature: String(conditionTemp?.value ?? 27),
+        humidity: String(conditionHumidity?.value ?? 5),
+        start_time: schedule?.start_time ?? '',
+        end_time: schedule?.end_time ?? '',
+        start_date: schedule?.start_date ?? '',
+        end_date: schedule?.end_date ?? '',
       },
     });
+  };
+
+  const handleToggleRuleActive = async (item: AutomationItem) => {
+    if (updatingSwitches[item.id]) {
+      return;
+    }
+
+    const current = !!switches[item.id];
+    const next = !current;
+
+    setSwitches((prev) => ({ ...prev, [item.id]: next }));
+    setUpdatingSwitches((prev) => ({ ...prev, [item.id]: true }));
+
+    try {
+      await automationAPI.setRuleActive(item.id, next);
+      setItems((prev) =>
+        prev.map((entry) =>
+          entry.id === item.id
+            ? {
+                ...entry,
+                rule: { ...entry.rule, is_active: next },
+              }
+            : entry
+        )
+      );
+    } catch (error) {
+      setSwitches((prev) => ({ ...prev, [item.id]: current }));
+      Alert.alert('Update failed', error instanceof Error ? error.message : 'Unknown error');
+    } finally {
+      setUpdatingSwitches((prev) => ({ ...prev, [item.id]: false }));
+    }
   };
 
   return (
@@ -227,21 +634,20 @@ export default function AutomationScreen() {
 
         <View style={styles.modeSwitchRow}>
           <Pressable
-            style={[styles.modeChip, activeMode === 'manual' && styles.modeChipActive]}
-            onPress={() => setActiveMode('manual')}>
-            <Text style={[styles.modeChipText, activeMode === 'manual' && styles.modeChipTextActive]}>Manual</Text>
+              style={[styles.modeChip, activeCategory === 'light' && styles.modeChipActive]}
+              onPress={() => setActiveCategory('light')}>
+              <Text style={[styles.modeChipText, activeCategory === 'light' && styles.modeChipTextActive]}>Light</Text>
           </Pressable>
           <Pressable
-            style={[styles.modeChip, activeMode === 'ai' && styles.modeChipActive]}
-            onPress={() => setActiveMode('ai')}>
-            <Text style={[styles.modeChipText, activeMode === 'ai' && styles.modeChipTextActive]}>AI</Text>
+              style={[styles.modeChip, activeCategory === 'fan' && styles.modeChipActive]}
+              onPress={() => setActiveCategory('fan')}>
+              <Text style={[styles.modeChipText, activeCategory === 'fan' && styles.modeChipTextActive]}>Fan</Text>
           </Pressable>
         </View>
 
-        {activeMode === 'manual' ? (
           <>
             <View style={styles.listWrap}>
-              {items.map((item) => {
+                {filteredItems.map((item) => {
                 const isOn = !!switches[item.id];
 
                 return (
@@ -266,16 +672,21 @@ export default function AutomationScreen() {
                         style={[styles.switchTrack, isOn && styles.switchTrackOn]}
                         onPress={(event) => {
                           event.stopPropagation();
-                          setSwitches((prev) => {
-                            return { ...prev, [item.id]: !prev[item.id] };
-                          });
-                        }}>
+                          void handleToggleRuleActive(item);
+                        }}
+                        disabled={updatingSwitches[item.id]}>
                         <View style={[styles.switchThumb, isOn && styles.switchThumbOn]} />
                       </Pressable>
                     </View>
                   </Pressable>
                 );
               })}
+
+              {filteredItems.length === 0 ? (
+                <View style={styles.emptyStateCard}>
+                  <Text style={styles.emptyStateText}>No {activeCategory} rules yet.</Text>
+                </View>
+              ) : null}
             </View>
 
             {deleteMode && (
@@ -290,23 +701,30 @@ export default function AutomationScreen() {
             {showComposer ? (
               <View style={styles.composeCard}>
                 <View style={styles.composeHandle} />
-                <Text style={styles.composeTitle}>Task Name</Text>
+                <Text style={styles.composeTitle}>Rule Name</Text>
                 <TextInput
                   ref={inputRef}
                   value={taskName}
                   onChangeText={setTaskName}
-                  onBlur={() => {
-                    if (!taskName.trim()) {
-                      setShowComposer(false);
-                    }
-                  }}
-                  placeholder="Name your task"
+                  placeholder="Name your rule"
                   placeholderTextColor="#7E7E83"
                   style={styles.composeInput}
                   returnKeyType="done"
                   blurOnSubmit
-                  onSubmitEditing={() => void handleCompleteTask()}
+                  onSubmitEditing={() => void handleSaveName()}
                 />
+
+                <View style={styles.composeActionsRow}>
+                  <Pressable style={styles.composeGhostButton} onPress={handleKeepDefaultName}>
+                    <Text style={styles.composeGhostText}>Keep default</Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.composeSaveButton, (isSavingName || isAutoCreating) && styles.composeSaveButtonDisabled]}
+                    onPress={() => void handleSaveName()}
+                    disabled={isSavingName || isAutoCreating}>
+                    <Text style={styles.composeSaveText}>{isSavingName ? 'Saving...' : 'Save name'}</Text>
+                  </Pressable>
+                </View>
               </View>
             ) : (
               <Pressable style={styles.addTaskCard} onPress={() => router.push('/automation-create')}>
@@ -315,28 +733,6 @@ export default function AutomationScreen() {
               </Pressable>
             )}
           </>
-        ) : (
-          <View style={styles.aiPanel}>
-            <View style={styles.aiBadge}>
-              <Text style={styles.aiBadgeText}>AI</Text>
-            </View>
-            <Text style={styles.aiTitle}>Smart suggestions coming soon</Text>
-            <Text style={styles.aiSubtitle}>
-              This section will generate automation ideas from device usage, sensor patterns, and your routines.
-            </Text>
-
-            <View style={styles.aiCard}>
-              <Text style={styles.aiCardLabel}>Planned features</Text>
-              <Text style={styles.aiCardText}>- Auto-create rules from temperature and humidity trends</Text>
-              <Text style={styles.aiCardText}>- Recommend schedules based on your habits</Text>
-              <Text style={styles.aiCardText}>- Build rules in natural language</Text>
-            </View>
-
-            <Pressable style={styles.aiButton} disabled>
-              <Text style={styles.aiButtonText}>Backend not ready</Text>
-            </Pressable>
-          </View>
-        )}
       </View>
     </SafeAreaView>
   );
@@ -402,6 +798,22 @@ const styles = StyleSheet.create({
   listWrap: {
     marginTop: 22,
     gap: 14,
+  },
+  emptyStateCard: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#D8D9DE',
+    borderStyle: 'dashed',
+    paddingVertical: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F7F7F8',
+  },
+  emptyStateText: {
+    color: '#7C7F86',
+    fontSize: 14,
+    fontWeight: '600',
+    textTransform: 'capitalize',
   },
   card: {
     width: '100%',
@@ -553,69 +965,40 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '500',
   },
-  aiPanel: {
-    marginTop: 22,
-    flex: 1,
-    paddingBottom: 28,
-  },
-  aiBadge: {
-    alignSelf: 'flex-start',
-    backgroundColor: '#111111',
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-  },
-  aiBadgeText: {
-    color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 0.6,
-  },
-  aiTitle: {
-    marginTop: 16,
-    color: '#26262A',
-    fontSize: 28,
-    lineHeight: 34,
-    fontWeight: '700',
-  },
-  aiSubtitle: {
+  composeActionsRow: {
     marginTop: 10,
-    color: '#7C7F86',
-    fontSize: 14,
-    lineHeight: 20,
+    flexDirection: 'row',
+    gap: 10,
   },
-  aiCard: {
-    marginTop: 18,
-    borderRadius: 18,
-    backgroundColor: '#F4F4F6',
+  composeGhostButton: {
+    flex: 1,
+    height: 42,
+    borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#E2E2E6',
-    padding: 16,
-  },
-  aiCardLabel: {
-    color: '#1F1F22',
-    fontSize: 15,
-    fontWeight: '700',
-    marginBottom: 10,
-  },
-  aiCardText: {
-    color: '#5E6068',
-    fontSize: 14,
-    lineHeight: 20,
-    marginTop: 4,
-  },
-  aiButton: {
-    marginTop: 18,
-    height: 48,
-    borderRadius: 12,
-    backgroundColor: '#D7D8DC',
+    borderColor: '#C9CAD0',
     alignItems: 'center',
     justifyContent: 'center',
-    opacity: 0.9,
+    backgroundColor: '#F7F7F8',
   },
-  aiButtonText: {
-    color: '#5F626B',
-    fontSize: 15,
+  composeGhostText: {
+    color: '#555962',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  composeSaveButton: {
+    flex: 1,
+    height: 42,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#111111',
+  },
+  composeSaveButtonDisabled: {
+    opacity: 0.65,
+  },
+  composeSaveText: {
+    color: '#FFFFFF',
+    fontSize: 14,
     fontWeight: '700',
   },
 });

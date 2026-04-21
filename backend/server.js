@@ -10,6 +10,7 @@ import deviceRoutes from "./src/routes/deviceRoutes.js";
 import lightRoutes from "./src/routes/lightRoutes.js";
 import fanRoutes from "./src/routes/fanRoutes.js";
 import automationRoutes from "./src/routes/automationRoutes.js";
+import notificationRoutes from "./src/routes/notificationRoutes.js";
 
 dotenv.config();
 
@@ -26,6 +27,7 @@ app.use("/api", deviceRoutes);
 app.use("/api", lightRoutes);
 app.use("/api", fanRoutes);
 app.use("/api", automationRoutes);
+app.use("/api", notificationRoutes);
 
 app.get("/", (req, res) => {
     res.send("Smart Home IoT Backend Running");

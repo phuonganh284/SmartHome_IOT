@@ -1,4 +1,5 @@
 import * as fanModel from "../models/fanModel.js";
+import * as notificationModel from "../models/notificationModel.js";
 import iotService from "../services/iotService.js";
 
 // DÀNH CHO TRANG FAN DETAILS
@@ -18,10 +19,34 @@ export const powerFan = async (req, res) => {
     try {
         const user_id = req.user.id;
         const device_id = Number(req.params.id);
-        const { status } = req.body;
+        const { status, fromAutomation = false, rule_id, rule_name } = req.body;
         if (![1, 0].includes(status)) return res.status(400).json({ error: "status must be 1 or 0" });
+        
         const updated = await fanModel.setFanPower({ device_id, user_id, status, db: req.supabase });
         try { await iotService.publishCommandForDevice({ device_id, db: req.supabase, action: "power", value: status }); } catch (e) { console.error("IoT publish failed:", e.message || e); }
+        
+        // Create notification if triggered by automation rule
+        if (fromAutomation && rule_id && rule_name) {
+            try {
+                const device = await req.supabase.from("devices").select("name").eq("id", device_id).single();
+                const device_name = device.data?.name || `Device ${device_id}`;
+                const action = status === 1 ? "turn_on" : "turn_off";
+                
+                await notificationModel.createNotification({
+                    user_id,
+                    rule_id,
+                    device_id,
+                    rule_name,
+                    device_name,
+                    action,
+                    db: req.supabase,
+                });
+            } catch (notifErr) {
+                console.warn("Failed to create notification:", notifErr.message || notifErr);
+                // Don't fail the request if notification creation fails
+            }
+        }
+        
         res.json(updated);
     } catch (err) {
         const status = err.status || 500;

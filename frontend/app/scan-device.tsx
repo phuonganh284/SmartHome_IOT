@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Alert } from 'react-native';
 import { Pressable, SafeAreaView, StyleSheet, Text, View } from 'react-native';
 
-import { deviceAPI } from '@/services/api';
+import { automationAPI, deviceAPI } from '@/services/api';
 
 const deviceConfig: Record<string, { name: string; image: any; width: number; height: number }> = {
   light: { name: 'Smart Light', image: require('@/assets/images/smart_light.png'), width: 280, height: 280 },
@@ -50,6 +50,32 @@ export default function ScanDeviceScreen() {
 
       const createdDevice = await deviceAPI.addDevice(payload);
       const createdId = Number(createdDevice?.id);
+
+      // Create AI rule for the new device
+      try {
+        const aiRuleName = `AI rule - ${device.name}`;
+        await automationAPI.createRule({
+          name: aiRuleName,
+          devices: [createdId],
+          conditions: [
+            {
+              sensor_type: 'temperature',
+              operator: '<',
+              value: 27,
+            },
+            {
+              sensor_type: 'humidity',
+              operator: '<',
+              value: 5,
+            },
+          ],
+          actions: [{ action: 'turn_on', value: null }],
+          schedule: null,
+        });
+      } catch (aiErr) {
+        // Silently skip if AI rule creation fails
+        console.warn('Failed to create AI rule:', aiErr);
+      }
 
       router.replace({
         pathname: '/connected',

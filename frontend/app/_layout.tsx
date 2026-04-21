@@ -30,6 +30,7 @@ export default function RootLayout() {
         <Stack.Screen name="automation-condition" options={{ headerShown: false }} />
         <Stack.Screen name="automation-schedule" options={{ headerShown: false }} />
         <Stack.Screen name="automation-action" options={{ headerShown: false }} />
+        <Stack.Screen name="notifications-modal" options={{ headerShown: false }} />
         <Stack.Screen name="device/[deviceId]" options={{ headerShown: false }} />
       </Stack>
       <StatusBar style="auto" />

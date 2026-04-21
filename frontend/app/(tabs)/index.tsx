@@ -1,9 +1,9 @@
 import { Image } from 'expo-image';
 import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useMemo, useState, useSyncExternalStore } from 'react';
+import { useCallback, useMemo, useState, useSyncExternalStore, useEffect } from 'react';
 import { Alert, Pressable, SafeAreaView, StyleSheet, Text, View } from 'react-native';
 
-import { deviceAPI, type Device } from '@/services/api';
+import { deviceAPI, notificationAPI, type Device } from '@/services/api';
 import {
   getLightUiState,
   getLightUiStateVersion,
@@ -63,8 +63,18 @@ export default function HomeScreen() {
   const [loadError, setLoadError] = useState('');
   const [deleteMode, setDeleteMode] = useState(false);
   const [selectedDevices, setSelectedDevices] = useState<Record<string, boolean>>({});
+  const [unreadCount, setUnreadCount] = useState(0);
 
   useSyncExternalStore(subscribeLightUiState, getLightUiStateVersion, getLightUiStateVersion);
+
+  const loadUnreadCount = useCallback(async () => {
+    try {
+      const result = await notificationAPI.getUnreadCount();
+      setUnreadCount(result.unread_count);
+    } catch (error) {
+      console.warn('Failed to load unread count:', error);
+    }
+  }, []);
 
   const loadDevices = useCallback(async () => {
     try {
@@ -89,6 +99,9 @@ export default function HomeScreen() {
       setSwitches(nextSwitches);
       setDeleteMode(false);
       setSelectedDevices({});
+
+      // Load unread notification count
+      await loadUnreadCount();
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to load devices';
       if (isAuthErrorMessage(message)) {
@@ -100,13 +113,22 @@ export default function HomeScreen() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [loadUnreadCount]);
 
   useFocusEffect(
     useCallback(() => {
       void loadDevices();
     }, [loadDevices])
   );
+
+  // Periodically refresh unread count every 30 seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      void loadUnreadCount();
+    }, 30000);
+
+    return () => clearInterval(interval);
+  }, [loadUnreadCount]);
 
   const toggleDevice = async (deviceId: string) => {
     const key = String(deviceId);
@@ -201,11 +223,16 @@ export default function HomeScreen() {
               style={styles.headerIcon}
               contentFit="contain"
             />
-            <Image
-              source={require('@/assets/images/notifications.png')}
-              style={styles.headerIcon}
-              contentFit="contain"
-            />
+            <Pressable
+              onPress={() => router.push('/notifications-modal')}
+              style={styles.bellIconContainer}>
+              <Image
+                source={require('@/assets/images/notifications.png')}
+                style={styles.headerIcon}
+                contentFit="contain"
+              />
+              {unreadCount > 0 && <View style={styles.notificationDot} />}
+            </Pressable>
           </View>
         </View>
 
@@ -309,6 +336,18 @@ const styles = StyleSheet.create({
     width: 24,
     height: 24,
     opacity: 1,
+  },
+  bellIconContainer: {
+    position: 'relative',
+  },
+  notificationDot: {
+    position: 'absolute',
+    top: -2,
+    right: -2,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#FF4444',
   },
   grid: {
     marginTop: 132,

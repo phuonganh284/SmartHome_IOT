@@ -163,6 +163,17 @@ export type AutomationRulePayload = {
   schedule?: Omit<RuleSchedule, 'id'> | null;
 };
 
+export type Notification = {
+  id: number;
+  user_id: string;
+  rule_id: number;
+  device_id: number;
+  message: string;
+  action: string;
+  read: boolean;
+  created_at: string;
+};
+
 const request = async <T>(path: string, options: RequestOptions = {}): Promise<T> => {
   const { method = 'GET', body, token } = options;
 
@@ -325,6 +336,34 @@ export const automationAPI = {
 
   deleteRule: (id: number | string) =>
     request<{ ok: boolean }>(`/rules/${id}`, {
+      method: 'DELETE',
+    }),
+
+  setRuleActive: (id: number | string, is_active: boolean) =>
+    request<{ ok: boolean; rule?: AutomationRule }>(`/rules/${id}/active`, {
+      method: 'PATCH',
+      body: { is_active },
+    }),
+};
+
+export const notificationAPI = {
+  getNotifications: (limit?: number) =>
+    request<Notification[]>(`/notifications${limit ? `?limit=${limit}` : ''}`),
+
+  getUnreadCount: () => request<{ unread_count: number }>('/notifications/unread/count'),
+
+  markAsRead: (id: number) =>
+    request<{ ok: boolean }>(`/notifications/${id}/read`, {
+      method: 'PATCH',
+    }),
+
+  markAllAsRead: () =>
+    request<{ ok: boolean }>('/notifications/read/all', {
+      method: 'PATCH',
+    }),
+
+  deleteNotification: (id: number) =>
+    request<{ ok: boolean }>(`/notifications/${id}`, {
       method: 'DELETE',
     }),
 };

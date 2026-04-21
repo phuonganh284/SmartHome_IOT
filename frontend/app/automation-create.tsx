@@ -1,5 +1,5 @@
 import { Image } from 'expo-image';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { deviceAPI, type Device } from '@/services/api';
@@ -44,6 +44,22 @@ const toCandidate = (device: Device): DeviceCandidate => ({
 });
 
 export default function AutomationCreateScreen() {
+  const params = useLocalSearchParams<{
+    taskId?: string;
+    taskName?: string;
+    action?: 'on' | 'off';
+    selected?: string;
+    selectedType?: string;
+    category?: string;
+    tempComparator?: '<' | '=' | '>';
+    humidityComparator?: '<' | '=' | '>';
+    temperature?: string;
+    humidity?: string;
+    start_time?: string;
+    end_time?: string;
+    start_date?: string;
+    end_date?: string;
+  }>();
   const [activeCategory, setActiveCategory] = useState<Category>('fan');
   const [selectedMap, setSelectedMap] = useState<Record<string, boolean>>({});
   const [candidates, setCandidates] = useState<DeviceCandidate[]>([]);
@@ -55,6 +71,25 @@ export default function AutomationCreateScreen() {
         const mapped = devices.map(toCandidate);
         setCandidates(mapped);
 
+        const selectedIdsFromParams = (params.selected || '')
+          .split(',')
+          .map((part) => Number(part.trim()))
+          .filter((id) => Number.isFinite(id) && id > 0);
+
+        if (selectedIdsFromParams.length > 0) {
+          const seeded: Record<string, boolean> = {};
+          selectedIdsFromParams.forEach((id) => {
+            seeded[String(id)] = true;
+          });
+          setSelectedMap(seeded);
+
+          const firstSelected = mapped.find((item) => item.id === selectedIdsFromParams[0]);
+          if (firstSelected) {
+            setActiveCategory(firstSelected.category);
+            return;
+          }
+        }
+
         const hasFanCategory = mapped.some((item) => item.category === 'fan');
         setActiveCategory(hasFanCategory ? 'fan' : 'lighting');
       } catch (error) {
@@ -63,7 +98,7 @@ export default function AutomationCreateScreen() {
     };
 
     void loadDevices();
-  }, []);
+  }, [params.selected]);
 
   const filteredCandidates = useMemo(
     () => candidates.filter((item) => item.category === activeCategory),
@@ -109,13 +144,35 @@ export default function AutomationCreateScreen() {
 
     const firstSelected = candidates.find((item) => String(item.id) === selectedIds[0]);
     const category = firstSelected?.category ?? activeCategory;
+
+    const nextParams = {
+      taskId: params.taskId ?? '',
+      taskName: params.taskName ?? '',
+      action: params.action ?? '',
+      category,
+      selected: selectedIds.join(','),
+      selectedType: firstSelected?.type || '',
+      tempComparator: params.tempComparator ?? '<',
+      humidityComparator: params.humidityComparator ?? '<',
+      temperature: params.temperature ?? '27',
+      humidity: params.humidity ?? '5',
+      start_time: params.start_time ?? '',
+      end_time: params.end_time ?? '',
+      start_date: params.start_date ?? '',
+      end_date: params.end_date ?? '',
+    };
+
+    if (category === 'lighting') {
+      router.push({
+        pathname: '/automation-schedule',
+        params: nextParams,
+      });
+      return;
+    }
+
     router.push({
       pathname: '/automation-condition',
-      params: {
-        category,
-        selected: selectedIds.join(','),
-        selectedType: firstSelected?.type || '',
-      },
+      params: nextParams,
     });
   };
 

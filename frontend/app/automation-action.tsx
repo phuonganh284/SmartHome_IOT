@@ -12,6 +12,9 @@ const deviceConfig: Record<string, { name: string; image: any; width: number; he
 
 export default function AutomationActionScreen() {
   const params = useLocalSearchParams<{
+    taskId?: string;
+    taskName?: string;
+    action?: string;
     type?: string;
     selectedType?: string;
     selected?: string;
@@ -28,12 +31,18 @@ export default function AutomationActionScreen() {
   const device = useMemo(() => deviceConfig[deviceType] || deviceConfig.ac, [deviceType]);
 
   const goToAutomationCompose = (action: 'off' | 'on') => {
+    const isEditing = !!params.taskId;
+
     router.replace({
-      pathname: '/(tabs)/automation',
+      pathname: '/automation',
       params: {
-        compose: '1',
+        autoCreate: isEditing ? undefined : '1',
+        autoUpdate: isEditing ? '1' : undefined,
+        ruleId: isEditing ? params.taskId : undefined,
+        ruleName: isEditing ? params.taskName : undefined,
         action,
         selected: params.selected ?? '',
+        selectedType: params.selectedType ?? params.type ?? '',
         tempComparator: params.tempComparator ?? '<',
         humidityComparator: params.humidityComparator ?? '<',
         temperature: params.temperature ?? '27',

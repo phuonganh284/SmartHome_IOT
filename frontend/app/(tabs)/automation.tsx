@@ -70,6 +70,34 @@ const getNextRuleNumber = (rules: AutomationRule[], prefix: string) => {
   return max + 1;
 };
 
+const buildRuleConditions = (
+  category: RuleCategory,
+  tempComparator: string,
+  humidityComparator: string,
+  temperature: string,
+  humidity: string
+) => {
+  if (category === 'light') {
+    return [];
+  }
+
+  const nextTemperature = Number(temperature);
+  const nextHumidity = Number(humidity);
+
+  return [
+    {
+      sensor_type: 'temperature',
+      operator: toComparator(tempComparator),
+      value: Number.isFinite(nextTemperature) ? nextTemperature : 27,
+    },
+    {
+      sensor_type: 'humidity',
+      operator: toComparator(humidityComparator),
+      value: Number.isFinite(nextHumidity) ? nextHumidity : 5,
+    },
+  ];
+};
+
 const toRulePayload = (rule: AutomationRule, name: string): AutomationRulePayload => ({
   name,
   devices: rule.devices || [],
@@ -168,18 +196,7 @@ export default function AutomationScreen() {
             await automationAPI.createRule({
               name: aiRuleName,
               devices: [device.id],
-              conditions: [
-                {
-                  sensor_type: 'temperature',
-                  operator: '<',
-                  value: 27,
-                },
-                {
-                  sensor_type: 'humidity',
-                  operator: '<',
-                  value: 5,
-                },
-              ],
+              conditions: buildRuleConditions(category, '<', '<', '27', '5'),
               actions: [{ action: 'turn_on', value: null }],
               schedule: null,
             });
@@ -265,8 +282,14 @@ export default function AutomationScreen() {
       }
 
       const nextAction = action === 'off' ? 'turn_off' : 'turn_on';
-      const nextTemperature = Number(temperature);
-      const nextHumidity = Number(humidity);
+      const ruleCategory = getRuleCategoryFromType(selectedType);
+      const nextConditions = buildRuleConditions(
+        ruleCategory,
+        tempComparator,
+        humidityComparator,
+        temperature,
+        humidity
+      );
 
       try {
         setIsAutoCreating(true);
@@ -277,18 +300,7 @@ export default function AutomationScreen() {
         const created = await automationAPI.createRule({
           name: defaultName,
           devices: selectedDevices,
-          conditions: [
-            {
-              sensor_type: 'temperature',
-              operator: toComparator(tempComparator),
-              value: Number.isFinite(nextTemperature) ? nextTemperature : 27,
-            },
-            {
-              sensor_type: 'humidity',
-              operator: toComparator(humidityComparator),
-              value: Number.isFinite(nextHumidity) ? nextHumidity : 5,
-            },
-          ],
+          conditions: nextConditions,
           actions: [{ action: nextAction, value: null }],
           schedule:
             startTime && endTime
@@ -394,8 +406,14 @@ export default function AutomationScreen() {
       }
 
       const nextAction = action === 'off' ? 'turn_off' : 'turn_on';
-      const nextTemperature = Number(temperature);
-      const nextHumidity = Number(humidity);
+      const ruleCategory = getRuleCategoryFromType(selectedType);
+      const nextConditions = buildRuleConditions(
+        ruleCategory,
+        tempComparator,
+        humidityComparator,
+        temperature,
+        humidity
+      );
       const current = items.find((item) => item.id === ruleId)?.rule;
       const fallbackName =
         toSingleParam(params.ruleName) || current?.name || `${getRuleCategoryPrefix(selectedType)} ${ruleId}`;
@@ -404,18 +422,7 @@ export default function AutomationScreen() {
         await automationAPI.updateRule(ruleId, {
           name: fallbackName,
           devices: selectedDevices,
-          conditions: [
-            {
-              sensor_type: 'temperature',
-              operator: toComparator(tempComparator),
-              value: Number.isFinite(nextTemperature) ? nextTemperature : 27,
-            },
-            {
-              sensor_type: 'humidity',
-              operator: toComparator(humidityComparator),
-              value: Number.isFinite(nextHumidity) ? nextHumidity : 5,
-            },
-          ],
+          conditions: nextConditions,
           actions: [{ action: nextAction, value: null }],
           schedule:
             startTime && endTime

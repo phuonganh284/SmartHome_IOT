@@ -21,6 +21,9 @@ export const getSensorReadings = async ({ sensor_id, range = "24h", db = supabas
     if (error) throw error;
 
     const cutoff = new Date();
+    if (range === 'all') {
+        return data;
+    }
 
     if (range === "1h") cutoff.setHours(cutoff.getHours() - 1);
     else if (range === "1w") cutoff.setDate(cutoff.getDate() - 7);

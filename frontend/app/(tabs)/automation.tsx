@@ -1,7 +1,7 @@
 import { Image } from 'expo-image';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Pressable, SafeAreaView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { automationAPI, deviceAPI, type AutomationRule, type AutomationRulePayload, type Device } from '@/services/api';
 
 type RuleCategory = 'light' | 'fan';
@@ -156,7 +156,8 @@ export default function AutomationScreen() {
     end_date?: string | string[];
   }>();
   const inputRef = useRef<TextInput>(null);
-  const [activeCategory, setActiveCategory] = useState<RuleCategory>('light');
+  const [mode, setMode] = useState<'ai' | 'manual'>('manual');
+  const [manualCategory, setManualCategory] = useState<RuleCategory>('light');
   const [items, setItems] = useState<AutomationItem[]>([]);
   const [switches, setSwitches] = useState<Record<string, boolean>>({});
   const [showComposer, setShowComposer] = useState(false);
@@ -221,7 +222,7 @@ export default function AutomationScreen() {
 
       const hasLight = nextItems.some((item) => item.category === 'light');
       const hasFan = nextItems.some((item) => item.category === 'fan');
-      setActiveCategory((prev) => {
+      setManualCategory((prev) => {
         if (prev === 'light' && !hasLight && hasFan) return 'fan';
         if (prev === 'fan' && !hasFan && hasLight) return 'light';
         return prev;
@@ -483,12 +484,14 @@ export default function AutomationScreen() {
     setDeleteMode(false);
     setSelectedTasks({});
     setShowComposer(false);
-  }, [activeCategory]);
+  }, [mode, manualCategory]);
 
-  const filteredItems = useMemo(
-    () => items.filter((item) => item.category === activeCategory),
-    [items, activeCategory]
-  );
+  const filteredItems = useMemo(() => {
+    if (mode === 'ai') {
+      return items.filter((item) => isAiRule(item.name));
+    }
+    return items.filter((item) => item.category === manualCategory && !isAiRule(item.name));
+  }, [items, mode, manualCategory]);
 
   const handleSaveName = async () => {
     const ruleId = renameRuleId;
@@ -630,27 +633,45 @@ export default function AutomationScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <View style={styles.container}>
+      <ScrollView contentContainerStyle={styles.container}>
         <View style={styles.headerRow}>
           <Text style={styles.title}>Automation</Text>
           <View style={styles.headerIcons}>
-            <Image source={require('@/assets/images/Vector.png')} style={styles.headerIcon} contentFit="contain" />
             <Image source={require('@/assets/images/notifications.png')} style={styles.headerIcon} contentFit="contain" />
           </View>
         </View>
 
         <View style={styles.modeSwitchRow}>
           <Pressable
-              style={[styles.modeChip, activeCategory === 'light' && styles.modeChipActive]}
-              onPress={() => setActiveCategory('light')}>
-              <Text style={[styles.modeChipText, activeCategory === 'light' && styles.modeChipTextActive]}>Light</Text>
+            style={[styles.modeChip, mode === 'ai' && styles.modeChipActive]}
+            onPress={() => setMode('ai')}
+          >
+            <Text style={[styles.modeChipText, mode === 'ai' && styles.modeChipTextActive]}>AI</Text>
           </Pressable>
           <Pressable
-              style={[styles.modeChip, activeCategory === 'fan' && styles.modeChipActive]}
-              onPress={() => setActiveCategory('fan')}>
-              <Text style={[styles.modeChipText, activeCategory === 'fan' && styles.modeChipTextActive]}>Fan</Text>
+            style={[styles.modeChip, mode === 'manual' && styles.modeChipActive]}
+            onPress={() => setMode('manual')}
+          >
+            <Text style={[styles.modeChipText, mode === 'manual' && styles.modeChipTextActive]}>Manual</Text>
           </Pressable>
         </View>
+
+        {mode === 'manual' ? (
+          <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+            <Pressable
+              style={[styles.modeChip, manualCategory === 'light' && styles.modeChipActive]}
+              onPress={() => setManualCategory('light')}
+            >
+              <Text style={[styles.modeChipText, manualCategory === 'light' && styles.modeChipTextActive]}>Light rule</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.modeChip, manualCategory === 'fan' && styles.modeChipActive]}
+              onPress={() => setManualCategory('fan')}
+            >
+              <Text style={[styles.modeChipText, manualCategory === 'fan' && styles.modeChipTextActive]}>Fan rule</Text>
+            </Pressable>
+          </View>
+        ) : null}
 
           <>
             <View style={styles.listWrap}>
@@ -691,7 +712,9 @@ export default function AutomationScreen() {
 
               {filteredItems.length === 0 ? (
                 <View style={styles.emptyStateCard}>
-                  <Text style={styles.emptyStateText}>No {activeCategory} rules yet.</Text>
+                  <Text style={styles.emptyStateText}>
+                    {mode === 'ai' ? 'No AI rules yet.' : `No ${manualCategory} rules yet.`}
+                  </Text>
                 </View>
               ) : null}
             </View>
@@ -734,13 +757,22 @@ export default function AutomationScreen() {
                 </View>
               </View>
             ) : (
-              <Pressable style={styles.addTaskCard} onPress={() => router.push('/automation-create')}>
+              <Pressable
+                style={styles.addTaskCard}
+                onPress={() => {
+                  if (mode === 'ai') {
+                    Alert.alert('AI mode', 'AI rules are auto-managed and cannot be created manually.');
+                    return;
+                  }
+                  router.push({ pathname: '/automation-create', params: { category: manualCategory } });
+                }}
+              >
                 <Text style={styles.addPlus}>+</Text>
                 <Text style={styles.addTaskText}>Add New Task</Text>
               </Pressable>
             )}
           </>
-      </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }

@@ -86,11 +86,6 @@ export default function ProfileScreen() {
           <Text style={styles.headerTitle}>User Profile</Text>
           <View style={styles.headerIcons}>
             <Image
-              source={require('@/assets/images/Vector.png')}
-              style={styles.headerIcon}
-              contentFit="contain"
-            />
-            <Image
               source={require('@/assets/images/notifications.png')}
               style={styles.headerIcon}
               contentFit="contain"

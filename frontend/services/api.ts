@@ -368,4 +368,11 @@ export const notificationAPI = {
     }),
 };
 
+export const sensorAPI = {
+  getSensorReadings: (sensorId: number | string, range = '24h') =>
+    request<Array<{ id: number; value: number; created_at: string }>>(
+      `/iot/sensor_readings/${sensorId}?range=${encodeURIComponent(range)}`
+    ),
+};
+
 export { API_BASE_URL };

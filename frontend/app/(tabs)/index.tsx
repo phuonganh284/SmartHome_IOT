@@ -218,11 +218,6 @@ export default function HomeScreen() {
         <View style={styles.headerRow}>
           <Text style={styles.greeting}>Welcome Home</Text>
           <View style={styles.headerIcons}>
-            <Image
-              source={require('@/assets/images/Vector.png')}
-              style={styles.headerIcon}
-              contentFit="contain"
-            />
             <Pressable
               onPress={() => router.push('/notifications-modal')}
               style={styles.bellIconContainer}>

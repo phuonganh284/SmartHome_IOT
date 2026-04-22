@@ -40,10 +40,10 @@ export default function DeviceControlScreen() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pendingColor, setPendingColor] = useState(selectedColor);
   const [sliderWidth, setSliderWidth] = useState(1);
-  const [applianceMode, setApplianceMode] = useState<'cooling' | 'heating' | 'low' | 'medium' | 'high' | 'auto'>(
-    startsAsFan ? 'low' : 'cooling'
+  const [applianceMode, setApplianceMode] = useState<'cooling' | 'heating' | 'auto'>(
+    startsAsFan ? 'auto' : 'cooling'
   );
-  const [speed, setSpeed] = useState<0 | 1 | 2 | 3>(0);
+  const [speed, setSpeed] = useState<0 | 1 | 2 | 3| 4 | 5>(0);
   const [savingColor, setSavingColor] = useState(false);
   const [savingIntensity, setSavingIntensity] = useState(false);
   const [savingAppliance, setSavingAppliance] = useState(false);
@@ -68,16 +68,10 @@ export default function DeviceControlScreen() {
       ? require('@/assets/images/smartfan.png')
       : require('@/assets/images/smartAC.png');
   const isFan = effectiveType === 'fan';
-  const modeLeft = isFan ? 'low' : 'cooling';
-  const modeRight = isFan ? 'high' : 'heating';
-  const modeLeftLabel = isFan ? 'Low' : 'Cooling';
-  const modeRightLabel = isFan ? 'High' : 'Heating';
-  const fanModes: Array<{ key: 'low' | 'medium' | 'high' | 'auto'; label: string }> = [
-    { key: 'low', label: 'Low' },
-    { key: 'medium', label: 'Medium' },
-    { key: 'high', label: 'High' },
-    { key: 'auto', label: 'Auto' },
-  ];
+  const modeLeft = 'cooling';
+  const modeRight = 'heating';
+  const modeLeftLabel = 'Cooling';
+  const modeRightLabel = 'Heating';
 
   const numericDeviceId = useMemo(() => {
     const parsed = Number(lightKey);
@@ -132,19 +126,9 @@ export default function DeviceControlScreen() {
         const modeFromApi = String((data as { mode?: unknown }).mode || '').toLowerCase();
         const speedFromApi = Number((data as { speed_level?: unknown }).speed_level);
 
-        if (
-          modeFromApi === 'low' ||
-          modeFromApi === 'medium' ||
-          modeFromApi === 'high' ||
-          modeFromApi === 'auto' ||
-          modeFromApi === 'cooling' ||
-          modeFromApi === 'heating'
-        ) {
-          setApplianceMode(modeFromApi);
-        }
 
-        if (speedFromApi >= 0 && speedFromApi <= 3) {
-          setSpeed(speedFromApi as 0 | 1 | 2 | 3);
+        if (speedFromApi >= 0 && speedFromApi <= 5) {
+          setSpeed(speedFromApi as 0 | 1 | 2 | 3 | 4 | 5);
         }
       } catch {
         // Keep local fallback state if API fetch fails.
@@ -193,26 +177,9 @@ export default function DeviceControlScreen() {
     }
   };
 
-  const updateApplianceMode = async (nextMode: 'cooling' | 'heating' | 'low' | 'medium' | 'high' | 'auto') => {
-    const previousMode = applianceMode;
-    setApplianceMode(nextMode);
 
-    if (isLight || numericDeviceId === null) {
-      return;
-    }
 
-    try {
-      setSavingAppliance(true);
-      await fanAPI.setMode(numericDeviceId, nextMode);
-    } catch (error) {
-      setApplianceMode(previousMode);
-      Alert.alert('Update mode failed', error instanceof Error ? error.message : 'Cannot connect to backend.');
-    } finally {
-      setSavingAppliance(false);
-    }
-  };
-
-  const updateApplianceSpeed = async (nextSpeed: 0 | 1 | 2 | 3) => {
+  const updateApplianceSpeed = async (nextSpeed: 0 | 1 | 2 | 3 | 4 | 5) => {
     const previousSpeed = speed;
     setSpeed(nextSpeed);
 
@@ -247,43 +214,16 @@ export default function DeviceControlScreen() {
             <Image source={applianceImage} style={styles.applianceImage} contentFit="contain" />
           </View>
 
-          <View style={styles.applianceSection}>
-            <Text style={styles.applianceSectionTitle}>Mode</Text>
-            {isFan ? (
-              <View style={styles.modeGrid}>
-                {fanModes.map((modeItem) => (
-                  <Pressable
-                    key={modeItem.key}
-                    style={[styles.modeButton, styles.modeGridButton, applianceMode === modeItem.key && styles.modeButtonActive]}
-                    onPress={() => void updateApplianceMode(modeItem.key)}>
-                    <Text style={[styles.modeText, applianceMode === modeItem.key && styles.modeTextActive]}>{modeItem.label}</Text>
-                  </Pressable>
-                ))}
-              </View>
-            ) : (
-              <View style={styles.modeRow}>
-                <Pressable
-                  style={[styles.modeButton, applianceMode === modeLeft && styles.modeButtonActive]}
-                  onPress={() => void updateApplianceMode(modeLeft)}>
-                  <Text style={[styles.modeText, applianceMode === modeLeft && styles.modeTextActive]}>{modeLeftLabel}</Text>
-                </Pressable>
-                <Pressable
-                  style={[styles.modeButton, applianceMode === modeRight && styles.modeButtonActive]}
-                  onPress={() => void updateApplianceMode(modeRight)}>
-                  <Text style={[styles.modeText, applianceMode === modeRight && styles.modeTextActive]}>{modeRightLabel}</Text>
-                </Pressable>
-              </View>
-            )}
-          </View>
+
 
           <View style={styles.applianceSection}>
             <Text style={styles.applianceSectionTitle}>Speed</Text>
             <View style={styles.speedRow}>
-              {[0, 1, 2, 3].map((speedLevel) => (
+              {[0, 1, 2, 3, 4, 5].map((speedLevel) => (
                 <Pressable
                   key={speedLevel}
                   style={[styles.speedButton, speed === speedLevel && styles.speedButtonActive]}
-                  onPress={() => void updateApplianceSpeed(speedLevel as 0 | 1 | 2 | 3)}>
+                  onPress={() => void updateApplianceSpeed(speedLevel as 0 | 1 | 2 | 3 | 4 | 5)}>
                   <Text style={[styles.speedText, speed === speedLevel && styles.speedTextActive]}>
                     {speedLevel}
                   </Text>

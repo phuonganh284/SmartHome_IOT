@@ -269,6 +269,12 @@ export const deviceAPI = {
     request<{ message: string }>(`/devices/${id}`, {
       method: 'DELETE',
     }),
+
+  updateDevice: (id: number | string, payload: Partial<Device>) =>
+    request<Device>(`/devices/${id}`, {
+      method: 'PUT',
+      body: payload,
+    }),
 };
 
 export const lightAPI = {

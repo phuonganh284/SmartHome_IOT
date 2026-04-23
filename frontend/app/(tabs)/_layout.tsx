@@ -4,6 +4,7 @@ import { Image } from 'expo-image';
 
 import { HapticTab } from '@/components/haptic-tab';
 
+
 const tabIconStyle = (focused: boolean) => ({
   width: 24,
   height: 24,

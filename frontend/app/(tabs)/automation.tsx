@@ -13,6 +13,7 @@ type AutomationItem = {
   name: string;
   icon: any;
   category: RuleCategory;
+  isAiRule: boolean;
   rule: AutomationRule;
   config?: {
     action?: 'on' | 'off';
@@ -123,12 +124,14 @@ const toRulePayload = (rule: AutomationRule, name: string): AutomationRulePayloa
 const mapRuleToItem = (rule: AutomationRule, devicesById: DeviceLookup): AutomationItem => {
   const firstDevice = rule.devices?.[0] ? devicesById[rule.devices[0]] : undefined;
   const category = getRuleCategoryFromType(firstDevice?.type);
+  const aiRule = isAiRule(rule.name);
 
   return {
     id: String(rule.id),
     name: rule.name || `Rule #${rule.id}`,
     icon: category === 'fan' ? require('@/assets/images/Frame.png') : require('@/assets/images/Light.png'),
     category,
+    isAiRule: aiRule,
     rule,
     config: {
       action: rule.actions?.[0]?.action?.toLowerCase().includes('off') ? 'off' : 'on',
@@ -158,9 +161,12 @@ export default function AutomationScreen() {
   const inputRef = useRef<TextInput>(null);
   const [mode, setMode] = useState<'ai' | 'manual'>('manual');
   const [manualCategory, setManualCategory] = useState<RuleCategory>('light');
+  const [aiCategory, setAiCategory] = useState<RuleCategory>('light');
   const [items, setItems] = useState<AutomationItem[]>([]);
+  const [devices, setDevices] = useState<Device[]>([]);
   const [switches, setSwitches] = useState<Record<string, boolean>>({});
   const [showComposer, setShowComposer] = useState(false);
+  const [showAiDevicePicker, setShowAiDevicePicker] = useState(false);
   const [taskName, setTaskName] = useState('');
   const [renameRuleId, setRenameRuleId] = useState<string | null>(null);
   const [isSavingName, setIsSavingName] = useState(false);
@@ -168,8 +174,11 @@ export default function AutomationScreen() {
   const [updatingSwitches, setUpdatingSwitches] = useState<Record<string, boolean>>({});
   const [deleteMode, setDeleteMode] = useState(false);
   const [selectedTasks, setSelectedTasks] = useState<Record<string, boolean>>({});
+  const [editMode, setEditMode] = useState(false);
   const processedAutoCreateKeyRef = useRef<string>('');
   const processedAutoUpdateKeyRef = useRef<string>('');
+  const suppressCardPressUntilRef = useRef<Record<string, number>>({});
+  const isResolvingConflictRef = useRef(false);
 
   const loadRules = useCallback(async () => {
     try {
@@ -178,39 +187,41 @@ export default function AutomationScreen() {
       devices.forEach((device) => {
         devicesById[device.id] = device;
       });
+      const nextItems = rules.map((rule) => mapRuleToItem(rule, devicesById));
 
-      // Create AI rules for devices that don't have them
-      const aiRulesByDevice = new Map<number, boolean>();
-      rules.forEach((rule) => {
-        if (isAiRule(rule.name)) {
-          rule.devices?.forEach((deviceId) => {
-            aiRulesByDevice.set(deviceId, true);
+      const hasActiveAiRule = nextItems.some((item) => item.isAiRule && item.rule.is_active);
+      const hasActiveManualRule = nextItems.some((item) => !item.isAiRule && item.rule.is_active);
+
+      if (hasActiveAiRule && hasActiveManualRule && !isResolvingConflictRef.current) {
+        try {
+          isResolvingConflictRef.current = true;
+          const activeRules = nextItems.filter((item) => item.rule.is_active);
+          await Promise.all(activeRules.map((item) => automationAPI.setRuleActive(item.id, false)));
+
+          Alert.alert(
+            'Automation conflict',
+            'AI and manual rules were active at the same time. All rules have been turned off.'
+          );
+
+          const resetRules = await automationAPI.getRules();
+          const resetItems = resetRules.map((rule) => mapRuleToItem(rule, devicesById));
+          const resetSwitches: Record<string, boolean> = {};
+
+          resetItems.forEach((item) => {
+            resetSwitches[item.id] = !!item.rule.is_active;
           });
-        }
-      });
 
-      for (const device of devices) {
-        if (!aiRulesByDevice.has(device.id)) {
-          try {
-            const category = getRuleCategoryFromType(device.type);
-            const aiRuleName = `AI rule - ${device.name || `Device ${device.id}`}`;
-            await automationAPI.createRule({
-              name: aiRuleName,
-              devices: [device.id],
-              conditions: buildRuleConditions(category, '<', '<', '27', '5'),
-              actions: [{ action: 'turn_on', value: null }],
-              schedule: null,
-            });
-          } catch (err) {
-            // Silently skip if AI rule creation fails
-            console.warn(`Failed to create AI rule for device ${device.id}:`, err);
-          }
+          setItems(resetItems);
+          setDevices(devices);
+          setSwitches(resetSwitches);
+          return;
+        } catch (error) {
+          Alert.alert('Conflict handling failed', error instanceof Error ? error.message : 'Unknown error');
+        } finally {
+          isResolvingConflictRef.current = false;
         }
       }
 
-      // Reload rules after creating AI rules
-      const updatedRules = await automationAPI.getRules();
-      const nextItems = updatedRules.map((rule) => mapRuleToItem(rule, devicesById));
       const nextSwitches: Record<string, boolean> = {};
 
       nextItems.forEach((item) => {
@@ -218,6 +229,7 @@ export default function AutomationScreen() {
       });
 
       setItems(nextItems);
+  setDevices(devices);
       setSwitches(nextSwitches);
 
       const hasLight = nextItems.some((item) => item.category === 'light');
@@ -225,6 +237,14 @@ export default function AutomationScreen() {
       setManualCategory((prev) => {
         if (prev === 'light' && !hasLight && hasFan) return 'fan';
         if (prev === 'fan' && !hasFan && hasLight) return 'light';
+        return prev;
+      });
+
+      const hasAiLight = nextItems.some((item) => item.isAiRule && item.category === 'light');
+      const hasAiFan = nextItems.some((item) => item.isAiRule && item.category === 'fan');
+      setAiCategory((prev) => {
+        if (prev === 'light' && !hasAiLight && hasAiFan) return 'fan';
+        if (prev === 'fan' && !hasAiFan && hasAiLight) return 'light';
         return prev;
       });
     } catch (error) {
@@ -484,14 +504,24 @@ export default function AutomationScreen() {
     setDeleteMode(false);
     setSelectedTasks({});
     setShowComposer(false);
-  }, [mode, manualCategory]);
+    setShowAiDevicePicker(false);
+    setEditMode(false);
+  }, [mode, manualCategory, aiCategory]);
 
   const filteredItems = useMemo(() => {
     if (mode === 'ai') {
-      return items.filter((item) => isAiRule(item.name));
+      return items.filter((item) => item.isAiRule && item.category === aiCategory);
     }
-    return items.filter((item) => item.category === manualCategory && !isAiRule(item.name));
-  }, [items, mode, manualCategory]);
+    return items.filter((item) => item.category === manualCategory && !item.isAiRule);
+  }, [items, mode, manualCategory, aiCategory]);
+
+  const availableAiDevices = useMemo(() => {
+    const categoryDevices = devices.filter((device) => getRuleCategoryFromType(device.type) === aiCategory);
+    return categoryDevices.filter((device) => {
+      const hasAiRule = items.some((item) => item.isAiRule && item.rule.devices?.includes(device.id));
+      return !hasAiRule;
+    });
+  }, [devices, items, aiCategory]);
 
   const handleSaveName = async () => {
     const ruleId = renameRuleId;
@@ -539,7 +569,7 @@ export default function AutomationScreen() {
 
   const enterDeleteMode = (taskId: string) => {
     const item = items.find((i) => i.id === taskId);
-    if (item && isAiRule(item.name)) {
+    if (item && item.isAiRule) {
       Alert.alert('Cannot Delete', 'AI rules cannot be deleted.');
       return;
     }
@@ -569,8 +599,35 @@ export default function AutomationScreen() {
     [selectedTasks]
   );
 
+  const createAiRuleForDevice = async (device: Device) => {
+    const exists = items.some((item) => item.isAiRule && item.rule.devices?.includes(device.id));
+    if (exists) {
+      Alert.alert('AI rule already exists', 'Each device can only have one AI rule.');
+      return;
+    }
+
+    const defaultName = `AI rule - ${device.name || `Device ${device.id}`}`;
+
+    try {
+      setIsAutoCreating(true);
+      await automationAPI.createRule({
+        name: defaultName,
+        devices: [device.id],
+        conditions: [],
+        actions: [],
+        schedule: null,
+      });
+      setShowAiDevicePicker(false);
+      await loadRules();
+    } catch (error) {
+      Alert.alert('Create AI rule failed', error instanceof Error ? error.message : 'Unknown error');
+    } finally {
+      setIsAutoCreating(false);
+    }
+  };
+
   const openTaskDevices = (item: AutomationItem) => {
-    if (isAiRule(item.name)) {
+    if (item.isAiRule) {
       Alert.alert('Cannot Edit', 'AI rules cannot be edited.');
       return;
     }
@@ -600,7 +657,96 @@ export default function AutomationScreen() {
     });
   };
 
+  const runToggleRuleActive = async (
+    item: AutomationItem,
+    next: boolean,
+    oppositeActiveRules: AutomationItem[]
+  ) => {
+    const updatingIds = [item.id, ...oppositeActiveRules.map((entry) => entry.id)];
+    const previousActiveById = new Map(items.map((entry) => [entry.id, !!entry.rule.is_active]));
+    const previousSwitchById: Record<string, boolean> = {};
+    updatingIds.forEach((id) => {
+      previousSwitchById[id] = !!switches[id];
+    });
+
+    // Update UI immediately so switch feels responsive.
+    setSwitches((prev) => {
+      const nextState = { ...prev, [item.id]: next };
+      oppositeActiveRules.forEach((entry) => {
+        nextState[entry.id] = false;
+      });
+      return nextState;
+    });
+    setItems((prev) =>
+      prev.map((entry) => {
+        if (entry.id === item.id) {
+          return { ...entry, rule: { ...entry.rule, is_active: next } };
+        }
+        if (oppositeActiveRules.some((opposite) => opposite.id === entry.id)) {
+          return { ...entry, rule: { ...entry.rule, is_active: false } };
+        }
+        return entry;
+      })
+    );
+
+    setUpdatingSwitches((prev) => {
+      const nextState = { ...prev };
+      updatingIds.forEach((id) => {
+        nextState[id] = true;
+      });
+      return nextState;
+    });
+
+    try {
+      const requests: Array<Promise<unknown>> = [automationAPI.setRuleActive(item.id, next)];
+
+      if (next && oppositeActiveRules.length > 0) {
+        oppositeActiveRules.forEach((entry) => {
+          requests.push(automationAPI.setRuleActive(entry.id, false));
+        });
+      }
+
+      await Promise.all(requests);
+    } catch (error) {
+      // Restore previous state if any API call fails.
+      setSwitches((prev) => {
+        const nextState = { ...prev };
+        updatingIds.forEach((id) => {
+          nextState[id] = previousSwitchById[id];
+        });
+        return nextState;
+      });
+      setItems((prev) =>
+        prev.map((entry) => {
+          const wasActive = previousActiveById.get(entry.id);
+          if (typeof wasActive !== 'boolean') {
+            return entry;
+          }
+
+          if (updatingIds.includes(entry.id)) {
+            return { ...entry, rule: { ...entry.rule, is_active: wasActive } };
+          }
+          return entry;
+        })
+      );
+      Alert.alert('Update failed', error instanceof Error ? error.message : 'Unknown error');
+    } finally {
+      setUpdatingSwitches((prev) => {
+        const nextState = { ...prev };
+        updatingIds.forEach((id) => {
+          nextState[id] = false;
+        });
+        return nextState;
+      });
+    }
+  };
+
   const handleToggleRuleActive = async (item: AutomationItem) => {
+    if (editMode) {
+      Alert.alert('Edit mode is on', 'Cannot turn rules on or off while editing. Turn off Edit to control switches.');
+      return;
+    }
+
     if (updatingSwitches[item.id]) {
       return;
     }
@@ -608,27 +754,38 @@ export default function AutomationScreen() {
     const current = !!switches[item.id];
     const next = !current;
 
-    setSwitches((prev) => ({ ...prev, [item.id]: next }));
-    setUpdatingSwitches((prev) => ({ ...prev, [item.id]: true }));
-
-    try {
-      await automationAPI.setRuleActive(item.id, next);
-      setItems((prev) =>
-        prev.map((entry) =>
-          entry.id === item.id
-            ? {
-                ...entry,
-                rule: { ...entry.rule, is_active: next },
-              }
-            : entry
+    const oppositeActiveRules = next
+      ? items.filter(
+          (entry) =>
+            entry.id !== item.id &&
+            entry.rule.is_active &&
+            (item.isAiRule ? !entry.isAiRule : entry.isAiRule)
         )
+      : [];
+
+    if (next && oppositeActiveRules.length > 0) {
+      Alert.alert(
+        'Mode conflict',
+        'You already have active rules in the other mode. Continuing will turn those rules off.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Continue',
+            style: 'destructive',
+            onPress: () => {
+              void runToggleRuleActive(item, next, oppositeActiveRules);
+            },
+          },
+        ]
       );
-    } catch (error) {
-      setSwitches((prev) => ({ ...prev, [item.id]: current }));
-      Alert.alert('Update failed', error instanceof Error ? error.message : 'Unknown error');
-    } finally {
-      setUpdatingSwitches((prev) => ({ ...prev, [item.id]: false }));
+      return;
     }
+
+    await runToggleRuleActive(item, next, oppositeActiveRules);
+  };
+
+  const cycleMode = () => {
+    setMode((prev) => (prev === 'ai' ? 'manual' : 'ai'));
   };
 
   return (
@@ -637,24 +794,22 @@ export default function AutomationScreen() {
         <View style={styles.headerRow}>
           <Text style={styles.title}>Automation</Text>
           <View style={styles.headerIcons}>
-            <Image source={require('@/assets/images/notifications.png')} style={styles.headerIcon} contentFit="contain" />
+            <Pressable
+              style={[styles.editToggle, editMode && styles.editToggleActive]}
+              onPress={() => setEditMode((prev) => !prev)}
+            >
+              <Text style={[styles.editToggleText, editMode && styles.editToggleTextActive]}>Edit</Text>
+            </Pressable>
           </View>
         </View>
 
-        <View style={styles.modeSwitchRow}>
-          <Pressable
-            style={[styles.modeChip, mode === 'ai' && styles.modeChipActive]}
-            onPress={() => setMode('ai')}
-          >
-            <Text style={[styles.modeChipText, mode === 'ai' && styles.modeChipTextActive]}>AI</Text>
-          </Pressable>
-          <Pressable
-            style={[styles.modeChip, mode === 'manual' && styles.modeChipActive]}
-            onPress={() => setMode('manual')}
-          >
-            <Text style={[styles.modeChipText, mode === 'manual' && styles.modeChipTextActive]}>Manual</Text>
-          </Pressable>
-        </View>
+        <Pressable style={styles.modeHero} onPress={cycleMode}>
+          <View style={styles.modeHeroBottomRow}>
+            <Text style={styles.modeHeroTitle}>{mode === 'ai' ? 'AI Mode' : 'Manual Mode'}</Text>
+            <Text style={[styles.modeHeroArrow, styles.modeHeroArrowLeft]}>{'<'}</Text>
+            <Text style={[styles.modeHeroArrow, styles.modeHeroArrowRight]}>{'>'}</Text>
+          </View>
+        </Pressable>
 
         {mode === 'manual' ? (
           <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
@@ -671,7 +826,22 @@ export default function AutomationScreen() {
               <Text style={[styles.modeChipText, manualCategory === 'fan' && styles.modeChipTextActive]}>Fan rule</Text>
             </Pressable>
           </View>
-        ) : null}
+        ) : (
+          <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+            <Pressable
+              style={[styles.modeChip, aiCategory === 'light' && styles.modeChipActive]}
+              onPress={() => setAiCategory('light')}
+            >
+              <Text style={[styles.modeChipText, aiCategory === 'light' && styles.modeChipTextActive]}>Light rule</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.modeChip, aiCategory === 'fan' && styles.modeChipActive]}
+              onPress={() => setAiCategory('fan')}
+            >
+              <Text style={[styles.modeChipText, aiCategory === 'fan' && styles.modeChipTextActive]}>Fan rule</Text>
+            </Pressable>
+          </View>
+        )}
 
           <>
             <View style={styles.listWrap}>
@@ -684,10 +854,20 @@ export default function AutomationScreen() {
                     style={[styles.card, selectedTasks[item.id] && styles.cardSelected]}
                     onLongPress={() => enterDeleteMode(item.id)}
                     onPress={() => {
+                      const suppressUntil = suppressCardPressUntilRef.current[item.id] || 0;
+                      if (Date.now() < suppressUntil) {
+                        return;
+                      }
+
                       if (deleteMode) {
                         toggleSelectedTask(item.id);
                         return;
                       }
+
+                      if (!editMode) {
+                        return;
+                      }
+
                       openTaskDevices(item);
                     }}>
                     <View style={styles.cardTop}>
@@ -698,8 +878,12 @@ export default function AutomationScreen() {
 
                       <Pressable
                         style={[styles.switchTrack, isOn && styles.switchTrackOn]}
+                        onPressIn={() => {
+                          suppressCardPressUntilRef.current[item.id] = Date.now() + 450;
+                        }}
                         onPress={(event) => {
                           event.stopPropagation();
+                          suppressCardPressUntilRef.current[item.id] = Date.now() + 450;
                           void handleToggleRuleActive(item);
                         }}
                         disabled={updatingSwitches[item.id]}>
@@ -756,12 +940,44 @@ export default function AutomationScreen() {
                   </Pressable>
                 </View>
               </View>
+            ) : showAiDevicePicker ? (
+              <View style={styles.composeCard}>
+                <View style={styles.composeHandle} />
+                <Text style={styles.composeTitle}>Select Device</Text>
+
+                {availableAiDevices.length === 0 ? (
+                  <Text style={styles.aiPickerEmptyText}>All {aiCategory} devices already have AI rules.</Text>
+                ) : (
+                  <View style={styles.aiDeviceList}>
+                    {availableAiDevices.map((device) => (
+                      <Pressable
+                        key={device.id}
+                        style={styles.aiDeviceRow}
+                        onPress={() => void createAiRuleForDevice(device)}
+                        disabled={isAutoCreating}
+                      >
+                        <Text style={styles.aiDeviceText}>{device.name || `Device ${device.id}`}</Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                )}
+
+                <View style={styles.composeActionsRow}>
+                  <Pressable
+                    style={styles.composeGhostButton}
+                    onPress={() => setShowAiDevicePicker(false)}
+                    disabled={isAutoCreating}
+                  >
+                    <Text style={styles.composeGhostText}>Cancel</Text>
+                  </Pressable>
+                </View>
+              </View>
             ) : (
               <Pressable
                 style={styles.addTaskCard}
                 onPress={() => {
                   if (mode === 'ai') {
-                    Alert.alert('AI mode', 'AI rules are auto-managed and cannot be created manually.');
+                    setShowAiDevicePicker(true);
                     return;
                   }
                   router.push({ pathname: '/automation-create', params: { category: manualCategory } });
@@ -806,6 +1022,65 @@ const styles = StyleSheet.create({
     width: 24,
     height: 24,
     opacity: 1,
+  },
+  editToggle: {
+    minWidth: 58,
+    height: 30,
+    borderRadius: 9,
+    borderWidth: 1,
+    borderColor: '#D0D2D8',
+    backgroundColor: '#EEEEF0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+  },
+  editToggleActive: {
+    backgroundColor: '#111111',
+    borderColor: '#111111',
+  },
+  editToggleText: {
+    color: '#666A73',
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: 0.2,
+  },
+  editToggleTextActive: {
+    color: '#FFFFFF',
+  },
+  modeHero: {
+    marginTop: 20,
+    paddingHorizontal: 4,
+    paddingVertical: 6,
+    backgroundColor: 'transparent',
+  },
+  modeHeroBottomRow: {
+    position: 'relative',
+    marginTop: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 30,
+  },
+  modeHeroTitle: {
+    color: '#4A4A4F',
+    fontSize: 24,
+    lineHeight: 28,
+    fontWeight: '800',
+    letterSpacing: -0.5,
+    textAlign: 'center',
+  },
+  modeHeroArrow: {
+    position: 'absolute',
+    color: '#4A4A4F',
+    fontSize: 26,
+    fontWeight: '900',
+    lineHeight: 26,
+  },
+  modeHeroArrowLeft: {
+    left: 0,
+  },
+  modeHeroArrowRight: {
+    right: 0,
   },
   modeSwitchRow: {
     marginTop: 28,
@@ -1039,5 +1314,29 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '700',
+  },
+  aiDeviceList: {
+    gap: 8,
+  },
+  aiDeviceRow: {
+    minHeight: 42,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#D1D3D8',
+    backgroundColor: '#F7F7F8',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+  },
+  aiDeviceText: {
+    color: '#2D2E33',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  aiPickerEmptyText: {
+    color: '#696C75',
+    fontSize: 14,
+    fontWeight: '500',
+    textAlign: 'center',
+    marginBottom: 6,
   },
 });

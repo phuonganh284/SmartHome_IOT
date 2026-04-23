@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
 import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useMemo, useState, useSyncExternalStore, useEffect } from 'react';
+import { useCallback, useMemo, useState, useSyncExternalStore, useEffect, useRef } from 'react';
 import { Alert, Pressable, SafeAreaView, StyleSheet, Text, View } from 'react-native';
 
 import { automationAPI, deviceAPI, notificationAPI, type Device } from '@/services/api';
@@ -56,16 +56,18 @@ const isAuthErrorMessage = (message: string) => {
   return lower.includes('no token') || lower.includes('invalid token') || lower.includes('401');
 };
 
-const isAiRuleName = (name?: string | null) => (name || '').trim().toLowerCase().startsWith('ai');
-
 export default function HomeScreen() {
   const [devices, setDevices] = useState<DeviceTile[]>([]);
   const [switches, setSwitches] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [deleteMode, setDeleteMode] = useState(false);
+  const [deletePhase, setDeletePhase] = useState<'idle' | 'pending' | 'running'>('idle');
+  const [deleteDotCount, setDeleteDotCount] = useState(1);
   const [selectedDevices, setSelectedDevices] = useState<Record<string, boolean>>({});
   const [unreadCount, setUnreadCount] = useState(0);
+  const deleteCommitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const deleteDotsTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useSyncExternalStore(subscribeLightUiState, getLightUiStateVersion, getLightUiStateVersion);
 
@@ -132,6 +134,17 @@ export default function HomeScreen() {
     return () => clearInterval(interval);
   }, [loadUnreadCount]);
 
+  useEffect(() => {
+    return () => {
+      if (deleteCommitTimerRef.current) {
+        clearTimeout(deleteCommitTimerRef.current);
+      }
+      if (deleteDotsTimerRef.current) {
+        clearInterval(deleteDotsTimerRef.current);
+      }
+    };
+  }, []);
+
   const toggleDevice = async (deviceId: string) => {
     const key = String(deviceId);
     const device = devices.find((item) => item.id === key);
@@ -168,40 +181,66 @@ export default function HomeScreen() {
     setSelectedDevices((prev) => ({ ...prev, [key]: true }));
   };
 
-  const deleteSelectedDevices = async () => {
-    const selectedIds = Object.keys(selectedDevices).filter((id) => selectedDevices[id]);
+  const stopDeleteAnimation = () => {
+    if (deleteDotsTimerRef.current) {
+      clearInterval(deleteDotsTimerRef.current);
+      deleteDotsTimerRef.current = null;
+    }
+    if (deleteCommitTimerRef.current) {
+      clearTimeout(deleteCommitTimerRef.current);
+      deleteCommitTimerRef.current = null;
+    }
+    setDeleteDotCount(1);
+  };
+
+  const deleteSelectedDevices = async (selectedIds: string[]) => {
     if (selectedIds.length === 0) {
       setDeleteMode(false);
+      setDeletePhase('idle');
+      stopDeleteAnimation();
       return;
     }
 
+    setDeletePhase('running');
+
     const selectedTiles = devices.filter((device) => selectedIds.includes(String(device.id)));
 
-    // Frontend-side cleanup: delete AI rules that target selected devices.
+    // Frontend-side cleanup: delete all manual + AI rules that target selected devices.
     const selectedBackendIds = selectedTiles.map((device) => Number(device.backendId)).filter(Number.isFinite);
     if (selectedBackendIds.length > 0) {
       try {
-        const rules = await automationAPI.getRules();
-        const aiRuleIds = rules
-          .filter(
-            (rule) =>
-              isAiRuleName(rule.name) &&
-              (rule.devices || []).some((deviceId) => selectedBackendIds.includes(Number(deviceId)))
-          )
+        const [manualRules, aiRules] = await Promise.all([
+          automationAPI.getRules(),
+          automationAPI.getAIRules(),
+        ]);
+
+        const manualRuleIds = manualRules
+          .filter((rule) => (rule.devices || []).some((deviceId) => selectedBackendIds.includes(Number(deviceId))))
           .map((rule) => String(rule.id));
 
-        if (aiRuleIds.length > 0) {
-          const aiDeleteResults = await Promise.allSettled(aiRuleIds.map((ruleId) => automationAPI.deleteRule(ruleId)));
-          const aiDeleteFailed = aiDeleteResults.some((result) => result.status === 'rejected');
+        const aiRuleIds = aiRules
+          .filter((rule) => (rule.devices || []).some((deviceId) => selectedBackendIds.includes(Number(deviceId))))
+          .map((rule) => String(rule.id));
 
-          if (aiDeleteFailed) {
-            setLoadError('Cannot delete related AI rules. Device was not deleted.');
+        if (manualRuleIds.length > 0 || aiRuleIds.length > 0) {
+          const deleteResults = await Promise.allSettled([
+            ...manualRuleIds.map((ruleId) => automationAPI.deleteRule(ruleId)),
+            ...aiRuleIds.map((ruleId) => automationAPI.deleteAIRule(ruleId)),
+          ]);
+
+          const anyDeleteFailed = deleteResults.some((result) => result.status === 'rejected');
+          if (anyDeleteFailed) {
+            setLoadError('Cannot delete related automation rules. Device was not deleted.');
+            setDeletePhase('idle');
+            stopDeleteAnimation();
             return;
           }
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Cannot load automation rules';
         setLoadError(isAuthErrorMessage(message) ? '' : message);
+        setDeletePhase('idle');
+        stopDeleteAnimation();
         return;
       }
     }
@@ -216,6 +255,8 @@ export default function HomeScreen() {
 
     if (deletedIds.length === 0) {
       setLoadError('Delete failed. Please try again.');
+      setDeletePhase('idle');
+      stopDeleteAnimation();
       return;
     }
 
@@ -237,32 +278,41 @@ export default function HomeScreen() {
     });
 
     setDeleteMode(false);
+    setDeletePhase('idle');
+    stopDeleteAnimation();
   };
 
-  const confirmDeleteSelectedDevices = () => {
+  const handleDeleteFabPress = () => {
+    if (deletePhase === 'running') {
+      return;
+    }
+
+    if (deletePhase === 'pending') {
+      if (deleteCommitTimerRef.current) {
+        clearTimeout(deleteCommitTimerRef.current);
+        deleteCommitTimerRef.current = null;
+      }
+      setDeletePhase('idle');
+      stopDeleteAnimation();
+      return;
+    }
+
     const selectedIds = Object.keys(selectedDevices).filter((id) => selectedDevices[id]);
     if (selectedIds.length === 0) {
       setDeleteMode(false);
       return;
     }
 
-    Alert.alert(
-      'Delete devices?',
-      'Deleting device will also delete related AI rules. Continue?',
-      [
-        {
-          text: 'Cancel',
-          style: 'cancel',
-        },
-        {
-          text: 'Continue',
-          style: 'destructive',
-          onPress: () => {
-            void deleteSelectedDevices();
-          },
-        },
-      ]
-    );
+    setDeletePhase('pending');
+    setDeleteDotCount(1);
+    deleteDotsTimerRef.current = setInterval(() => {
+      setDeleteDotCount((prev) => (prev % 3) + 1);
+    }, 280);
+
+    deleteCommitTimerRef.current = setTimeout(() => {
+      deleteCommitTimerRef.current = null;
+      void deleteSelectedDevices(selectedIds);
+    }, 900);
   };
 
   const selectedCount = useMemo(
@@ -275,18 +325,7 @@ export default function HomeScreen() {
       <View style={styles.container}>
         <View style={styles.headerRow}>
           <Text style={styles.greeting}>Welcome Home</Text>
-          <View style={styles.headerIcons}>
-            <Pressable
-              onPress={() => router.push('/notifications-modal')}
-              style={styles.bellIconContainer}>
-              <Image
-                source={require('@/assets/images/notifications.png')}
-                style={styles.headerIcon}
-                contentFit="contain"
-              />
-              {unreadCount > 0 && <View style={styles.notificationDot} />}
-            </Pressable>
-          </View>
+          <View style={styles.headerRight} />
         </View>
 
         {loading ? (
@@ -340,8 +379,10 @@ export default function HomeScreen() {
 
         {deleteMode && (
           <View style={styles.deleteRow}>
-            <Text style={styles.deleteCountText}>{selectedCount} selected</Text>
-            <Pressable style={styles.deleteFab} onPress={confirmDeleteSelectedDevices}>
+            <Text style={styles.deleteCountText}>
+              {deletePhase === 'idle' ? `${selectedCount} selected` : `Deleting${'.'.repeat(deleteDotCount)}`}
+            </Text>
+            <Pressable style={styles.deleteFab} onPress={handleDeleteFabPress}>
               <Image
                 source={require('@/assets/images/Trash 2.png')}
                 style={styles.deleteFabIcon}
@@ -384,6 +425,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+  },
+  headerRight: {
+    width: 24,
   },
   headerIcon: {
     width: 24,

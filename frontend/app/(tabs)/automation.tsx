@@ -50,8 +50,9 @@ const getRuleCategoryPrefix = (value?: string) => {
   return 'light rule';
 };
 
-const isAiRule = (name?: string | null): boolean => {
-  return (name || '').toLowerCase().startsWith('ai');
+const isAiRule = (rule: AutomationRule): boolean => {
+  if (typeof rule.is_ai === 'boolean') return rule.is_ai;
+  return (rule.name || '').toLowerCase().startsWith('ai');
 };
 
 const getNextRuleNumber = (rules: AutomationRule[], prefix: string) => {
@@ -124,7 +125,7 @@ const toRulePayload = (rule: AutomationRule, name: string): AutomationRulePayloa
 const mapRuleToItem = (rule: AutomationRule, devicesById: DeviceLookup): AutomationItem => {
   const firstDevice = rule.devices?.[0] ? devicesById[rule.devices[0]] : undefined;
   const category = getRuleCategoryFromType(firstDevice?.type);
-  const aiRule = isAiRule(rule.name);
+  const aiRule = isAiRule(rule);
 
   return {
     id: String(rule.id),
@@ -163,26 +164,43 @@ export default function AutomationScreen() {
   const [manualCategory, setManualCategory] = useState<RuleCategory>('light');
   const [aiCategory, setAiCategory] = useState<RuleCategory>('light');
   const [items, setItems] = useState<AutomationItem[]>([]);
-  const [devices, setDevices] = useState<Device[]>([]);
   const [switches, setSwitches] = useState<Record<string, boolean>>({});
   const [showComposer, setShowComposer] = useState(false);
-  const [showAiDevicePicker, setShowAiDevicePicker] = useState(false);
   const [taskName, setTaskName] = useState('');
   const [renameRuleId, setRenameRuleId] = useState<string | null>(null);
   const [isSavingName, setIsSavingName] = useState(false);
   const [isAutoCreating, setIsAutoCreating] = useState(false);
   const [updatingSwitches, setUpdatingSwitches] = useState<Record<string, boolean>>({});
   const [deleteMode, setDeleteMode] = useState(false);
+  const [deletePhase, setDeletePhase] = useState<'idle' | 'pending' | 'running'>('idle');
+  const [deleteDotCount, setDeleteDotCount] = useState(1);
   const [selectedTasks, setSelectedTasks] = useState<Record<string, boolean>>({});
   const [editMode, setEditMode] = useState(false);
   const processedAutoCreateKeyRef = useRef<string>('');
   const processedAutoUpdateKeyRef = useRef<string>('');
   const suppressCardPressUntilRef = useRef<Record<string, number>>({});
   const isResolvingConflictRef = useRef(false);
+  const deleteCommitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const deleteDotsTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const setRuleActiveByType = useCallback((item: AutomationItem, is_active: boolean) => {
+    if (item.isAiRule) {
+      return automationAPI.toggleAIRuleActive(item.id, is_active);
+    }
+    return automationAPI.setRuleActive(item.id, is_active);
+  }, []);
 
   const loadRules = useCallback(async () => {
     try {
-      const [rules, devices] = await Promise.all([automationAPI.getRules(), deviceAPI.getDevices()]);
+      const [manualRules, aiRules, devices] = await Promise.all([
+        automationAPI.getRules(),
+        automationAPI.getAIRules(),
+        deviceAPI.getDevices(),
+      ]);
+      const rules = [
+        ...manualRules.map((rule) => ({ ...rule, is_ai: false })),
+        ...aiRules.map((rule) => ({ ...rule, is_ai: true })),
+      ];
       const devicesById: DeviceLookup = {};
       devices.forEach((device) => {
         devicesById[device.id] = device;
@@ -196,14 +214,21 @@ export default function AutomationScreen() {
         try {
           isResolvingConflictRef.current = true;
           const activeRules = nextItems.filter((item) => item.rule.is_active);
-          await Promise.all(activeRules.map((item) => automationAPI.setRuleActive(item.id, false)));
+          await Promise.all(activeRules.map((item) => setRuleActiveByType(item, false)));
 
           Alert.alert(
             'Automation conflict',
             'AI and manual rules were active at the same time. All rules have been turned off.'
           );
 
-          const resetRules = await automationAPI.getRules();
+          const [resetManualRules, resetAiRules] = await Promise.all([
+            automationAPI.getRules(),
+            automationAPI.getAIRules(),
+          ]);
+          const resetRules = [
+            ...resetManualRules.map((rule) => ({ ...rule, is_ai: false })),
+            ...resetAiRules.map((rule) => ({ ...rule, is_ai: true })),
+          ];
           const resetItems = resetRules.map((rule) => mapRuleToItem(rule, devicesById));
           const resetSwitches: Record<string, boolean> = {};
 
@@ -212,7 +237,6 @@ export default function AutomationScreen() {
           });
 
           setItems(resetItems);
-          setDevices(devices);
           setSwitches(resetSwitches);
           return;
         } catch (error) {
@@ -229,7 +253,6 @@ export default function AutomationScreen() {
       });
 
       setItems(nextItems);
-  setDevices(devices);
       setSwitches(nextSwitches);
 
       const hasLight = nextItems.some((item) => item.category === 'light');
@@ -250,7 +273,7 @@ export default function AutomationScreen() {
     } catch (error) {
       Alert.alert('Cannot load automations', error instanceof Error ? error.message : 'Unknown error');
     }
-  }, []);
+  }, [setRuleActiveByType]);
 
   useFocusEffect(
     useCallback(() => {
@@ -501,12 +524,33 @@ export default function AutomationScreen() {
   ]);
 
   useEffect(() => {
+    if (deleteCommitTimerRef.current) {
+      clearTimeout(deleteCommitTimerRef.current);
+      deleteCommitTimerRef.current = null;
+    }
+    if (deleteDotsTimerRef.current) {
+      clearInterval(deleteDotsTimerRef.current);
+      deleteDotsTimerRef.current = null;
+    }
+
     setDeleteMode(false);
     setSelectedTasks({});
     setShowComposer(false);
-    setShowAiDevicePicker(false);
     setEditMode(false);
+    setDeletePhase('idle');
+    setDeleteDotCount(1);
   }, [mode, manualCategory, aiCategory]);
+
+  useEffect(() => {
+    return () => {
+      if (deleteCommitTimerRef.current) {
+        clearTimeout(deleteCommitTimerRef.current);
+      }
+      if (deleteDotsTimerRef.current) {
+        clearInterval(deleteDotsTimerRef.current);
+      }
+    };
+  }, []);
 
   const filteredItems = useMemo(() => {
     if (mode === 'ai') {
@@ -514,14 +558,6 @@ export default function AutomationScreen() {
     }
     return items.filter((item) => item.category === manualCategory && !item.isAiRule);
   }, [items, mode, manualCategory, aiCategory]);
-
-  const availableAiDevices = useMemo(() => {
-    const categoryDevices = devices.filter((device) => getRuleCategoryFromType(device.type) === aiCategory);
-    return categoryDevices.filter((device) => {
-      const hasAiRule = items.some((item) => item.isAiRule && item.rule.devices?.includes(device.id));
-      return !hasAiRule;
-    });
-  }, [devices, items, aiCategory]);
 
   const handleSaveName = async () => {
     const ruleId = renameRuleId;
@@ -540,6 +576,11 @@ export default function AutomationScreen() {
     const targetRule = items.find((item) => item.id === ruleId)?.rule;
     if (!targetRule) {
       Alert.alert('Rule not found', 'Cannot rename this rule right now. Please refresh and try again.');
+      return;
+    }
+
+    if (isAiRule(targetRule)) {
+      Alert.alert('Cannot Rename', 'AI rules cannot be edited.');
       return;
     }
 
@@ -577,54 +618,75 @@ export default function AutomationScreen() {
     setSelectedTasks((prev) => ({ ...prev, [taskId]: true }));
   };
 
-  const deleteSelectedTasks = async () => {
-    const selectedIds = Object.keys(selectedTasks).filter((id) => selectedTasks[id]);
+  const deleteSelectedTasks = async (selectedIds: string[]) => {
     if (selectedIds.length === 0) {
       setDeleteMode(false);
+      setDeletePhase('idle');
       return;
     }
 
     try {
+      setDeletePhase('running');
       await Promise.all(selectedIds.map((id) => automationAPI.deleteRule(id)));
       setSelectedTasks({});
       setDeleteMode(false);
       await loadRules();
     } catch (error) {
       Alert.alert('Delete failed', error instanceof Error ? error.message : 'Unknown error');
+    } finally {
+      setDeletePhase('idle');
+      setDeleteDotCount(1);
+      if (deleteDotsTimerRef.current) {
+        clearInterval(deleteDotsTimerRef.current);
+        deleteDotsTimerRef.current = null;
+      }
+      if (deleteCommitTimerRef.current) {
+        clearTimeout(deleteCommitTimerRef.current);
+        deleteCommitTimerRef.current = null;
+      }
     }
+  };
+
+  const handleDeleteFabPress = () => {
+    if (deletePhase === 'running') {
+      return;
+    }
+
+    if (deletePhase === 'pending') {
+      if (deleteCommitTimerRef.current) {
+        clearTimeout(deleteCommitTimerRef.current);
+        deleteCommitTimerRef.current = null;
+      }
+      if (deleteDotsTimerRef.current) {
+        clearInterval(deleteDotsTimerRef.current);
+        deleteDotsTimerRef.current = null;
+      }
+      setDeletePhase('idle');
+      setDeleteDotCount(1);
+      return;
+    }
+
+    const selectedIds = Object.keys(selectedTasks).filter((id) => selectedTasks[id]);
+    if (selectedIds.length === 0) {
+      setDeleteMode(false);
+      return;
+    }
+
+    setDeletePhase('pending');
+    setDeleteDotCount(1);
+    deleteDotsTimerRef.current = setInterval(() => {
+      setDeleteDotCount((prev) => (prev % 3) + 1);
+    }, 280);
+
+    deleteCommitTimerRef.current = setTimeout(() => {
+      void deleteSelectedTasks(selectedIds);
+    }, 900);
   };
 
   const selectedCount = useMemo(
     () => Object.keys(selectedTasks).filter((id) => selectedTasks[id]).length,
     [selectedTasks]
   );
-
-  const createAiRuleForDevice = async (device: Device) => {
-    const exists = items.some((item) => item.isAiRule && item.rule.devices?.includes(device.id));
-    if (exists) {
-      Alert.alert('AI rule already exists', 'Each device can only have one AI rule.');
-      return;
-    }
-
-    const defaultName = `AI rule - ${device.name || `Device ${device.id}`}`;
-
-    try {
-      setIsAutoCreating(true);
-      await automationAPI.createRule({
-        name: defaultName,
-        devices: [device.id],
-        conditions: [],
-        actions: [],
-        schedule: null,
-      });
-      setShowAiDevicePicker(false);
-      await loadRules();
-    } catch (error) {
-      Alert.alert('Create AI rule failed', error instanceof Error ? error.message : 'Unknown error');
-    } finally {
-      setIsAutoCreating(false);
-    }
-  };
 
   const openTaskDevices = (item: AutomationItem) => {
     if (item.isAiRule) {
@@ -698,11 +760,11 @@ export default function AutomationScreen() {
     });
 
     try {
-      const requests: Array<Promise<unknown>> = [automationAPI.setRuleActive(item.id, next)];
+      const requests: Array<Promise<unknown>> = [setRuleActiveByType(item, next)];
 
       if (next && oppositeActiveRules.length > 0) {
         oppositeActiveRules.forEach((entry) => {
-          requests.push(automationAPI.setRuleActive(entry.id, false));
+          requests.push(setRuleActiveByType(entry, false));
         });
       }
 
@@ -905,8 +967,10 @@ export default function AutomationScreen() {
 
             {deleteMode && (
               <View style={styles.deleteRow}>
-                <Text style={styles.deleteCountText}>{selectedCount} selected</Text>
-                <Pressable style={styles.deleteFab} onPress={deleteSelectedTasks}>
+                <Text style={styles.deleteCountText}>
+                  {deletePhase === 'idle' ? `${selectedCount} selected` : `Deleting${'.'.repeat(deleteDotCount)}`}
+                </Text>
+                <Pressable style={styles.deleteFab} onPress={handleDeleteFabPress}>
                   <Image source={require('@/assets/images/Trash 2.png')} style={styles.deleteFabIcon} contentFit="contain" />
                 </Pressable>
               </View>
@@ -940,44 +1004,18 @@ export default function AutomationScreen() {
                   </Pressable>
                 </View>
               </View>
-            ) : showAiDevicePicker ? (
-              <View style={styles.composeCard}>
-                <View style={styles.composeHandle} />
-                <Text style={styles.composeTitle}>Select Device</Text>
-
-                {availableAiDevices.length === 0 ? (
-                  <Text style={styles.aiPickerEmptyText}>All {aiCategory} devices already have AI rules.</Text>
-                ) : (
-                  <View style={styles.aiDeviceList}>
-                    {availableAiDevices.map((device) => (
-                      <Pressable
-                        key={device.id}
-                        style={styles.aiDeviceRow}
-                        onPress={() => void createAiRuleForDevice(device)}
-                        disabled={isAutoCreating}
-                      >
-                        <Text style={styles.aiDeviceText}>{device.name || `Device ${device.id}`}</Text>
-                      </Pressable>
-                    ))}
-                  </View>
-                )}
-
-                <View style={styles.composeActionsRow}>
-                  <Pressable
-                    style={styles.composeGhostButton}
-                    onPress={() => setShowAiDevicePicker(false)}
-                    disabled={isAutoCreating}
-                  >
-                    <Text style={styles.composeGhostText}>Cancel</Text>
-                  </Pressable>
-                </View>
-              </View>
             ) : (
               <Pressable
                 style={styles.addTaskCard}
                 onPress={() => {
                   if (mode === 'ai') {
-                    setShowAiDevicePicker(true);
+                    router.push({
+                      pathname: '/automation-create',
+                      params: {
+                        aiMode: '1',
+                        category: aiCategory,
+                      },
+                    });
                     return;
                   }
                   router.push({ pathname: '/automation-create', params: { category: manualCategory } });
@@ -1314,29 +1352,5 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '700',
-  },
-  aiDeviceList: {
-    gap: 8,
-  },
-  aiDeviceRow: {
-    minHeight: 42,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#D1D3D8',
-    backgroundColor: '#F7F7F8',
-    justifyContent: 'center',
-    paddingHorizontal: 12,
-  },
-  aiDeviceText: {
-    color: '#2D2E33',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  aiPickerEmptyText: {
-    color: '#696C75',
-    fontSize: 14,
-    fontWeight: '500',
-    textAlign: 'center',
-    marginBottom: 6,
   },
 });

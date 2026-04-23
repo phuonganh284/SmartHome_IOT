@@ -84,13 +84,7 @@ export default function ProfileScreen() {
       <ScrollView contentContainerStyle={styles.container}>
         <View style={styles.header}>
           <Text style={styles.headerTitle}>User Profile</Text>
-          <View style={styles.headerIcons}>
-            <Image
-              source={require('@/assets/images/notifications.png')}
-              style={styles.headerIcon}
-              contentFit="contain"
-            />
-          </View>
+          <View style={styles.headerRight} />
         </View>
 
         <View style={styles.avatarWrap}>
@@ -156,6 +150,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+  },
+  headerRight: {
+    width: 24,
+    height: 24,
   },
   headerIcon: {
     width: 24,

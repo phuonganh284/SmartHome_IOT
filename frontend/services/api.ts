@@ -147,6 +147,7 @@ export type AutomationRule = {
   id: number;
   name: string | null;
   is_active: boolean;
+  is_ai?: boolean;
   last_executed?: string | null;
   created_at?: string;
   devices: number[];
@@ -328,8 +329,16 @@ export const profileAPI = {
 export const automationAPI = {
   getRules: () => request<AutomationRule[]>('/rules'),
 
+  getAIRules: () => request<AutomationRule[]>('/rules/ai'),
+
   createRule: (payload: AutomationRulePayload) =>
     request<AutomationRule>('/rules', {
+      method: 'POST',
+      body: payload,
+    }),
+
+  createAIRule: (payload: AutomationRulePayload) =>
+    request<AutomationRule>('/rules/ai', {
       method: 'POST',
       body: payload,
     }),
@@ -349,6 +358,17 @@ export const automationAPI = {
     request<{ ok: boolean; rule?: AutomationRule }>(`/rules/${id}/active`, {
       method: 'PATCH',
       body: { is_active },
+    }),
+
+  toggleAIRuleActive: (id: number | string, is_active: boolean) =>
+    request<{ ok: boolean; rule?: AutomationRule }>(`/rules/ai/${id}/active`, {
+      method: 'PATCH',
+      body: { is_active },
+    }),
+
+  deleteAIRule: (id: number | string) =>
+    request<{ ok: boolean }>(`/rules/ai/${id}`, {
+      method: 'DELETE',
     }),
 };
 

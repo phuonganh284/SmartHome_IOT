@@ -2,7 +2,7 @@ import { Image } from 'expo-image';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { deviceAPI, type Device } from '@/services/api';
+import { automationAPI, deviceAPI, type Device } from '@/services/api';
 
 type Category = 'lighting' | 'fan';
 
@@ -45,6 +45,7 @@ const toCandidate = (device: Device): DeviceCandidate => ({
 
 export default function AutomationCreateScreen() {
   const params = useLocalSearchParams<{
+    aiMode?: string;
     taskId?: string;
     taskName?: string;
     action?: 'on' | 'off';
@@ -63,12 +64,39 @@ export default function AutomationCreateScreen() {
   const [activeCategory, setActiveCategory] = useState<Category>('fan');
   const [selectedMap, setSelectedMap] = useState<Record<string, boolean>>({});
   const [candidates, setCandidates] = useState<DeviceCandidate[]>([]);
+  const [isSavingAiRule, setIsSavingAiRule] = useState(false);
+
+  const isAiMode = params.aiMode === '1';
+
+  const paramCategory = useMemo<Category | null>(() => {
+    const value = (params.category || '').toLowerCase();
+    if (value === 'lighting' || value === 'light') return 'lighting';
+    if (value === 'fan') return 'fan';
+    return null;
+  }, [params.category]);
 
   useEffect(() => {
     const loadDevices = async () => {
       try {
-        const devices = await deviceAPI.getDevices();
-        const mapped = devices.map(toCandidate);
+        const [devices, aiRules] = await Promise.all([
+          deviceAPI.getDevices(),
+          isAiMode ? automationAPI.getAIRules() : Promise.resolve([]),
+        ]);
+
+        const excludedAiDeviceIds = new Set<number>();
+        if (isAiMode) {
+          aiRules.forEach((rule) => {
+            (rule.devices || []).forEach((deviceId) => excludedAiDeviceIds.add(deviceId));
+          });
+        }
+
+        const mapped = devices
+          .map(toCandidate)
+          .filter((candidate) => {
+            if (!isAiMode) return true;
+            if (excludedAiDeviceIds.has(candidate.id)) return false;
+            return true;
+          });
         setCandidates(mapped);
 
         const selectedIdsFromParams = (params.selected || '')
@@ -91,14 +119,18 @@ export default function AutomationCreateScreen() {
         }
 
         const hasFanCategory = mapped.some((item) => item.category === 'fan');
-        setActiveCategory(hasFanCategory ? 'fan' : 'lighting');
+        if (paramCategory) {
+          setActiveCategory(paramCategory);
+        } else {
+          setActiveCategory(hasFanCategory ? 'fan' : 'lighting');
+        }
       } catch (error) {
         Alert.alert('Cannot load devices', error instanceof Error ? error.message : 'Unknown error');
       }
     };
 
     void loadDevices();
-  }, [params.selected]);
+  }, [isAiMode, paramCategory, params.selected]);
 
   const filteredCandidates = useMemo(
     () => candidates.filter((item) => item.category === activeCategory),
@@ -144,6 +176,40 @@ export default function AutomationCreateScreen() {
 
     const firstSelected = candidates.find((item) => String(item.id) === selectedIds[0]);
     const category = firstSelected?.category ?? activeCategory;
+
+    if (isAiMode) {
+      const defaultActions =
+        category === 'fan'
+          ? [{ action: 'speed', value: null }]
+          : [{ action: 'power', value: null }];
+
+      const defaultName =
+        selectedIds.length === 1
+          ? `AI rule - ${firstSelected?.name || `Device ${selectedIds[0]}`}`
+          : `AI ${category === 'fan' ? 'fan' : 'light'} rule (${selectedIds.length} devices)`;
+
+      const createAiRule = async () => {
+        try {
+          setIsSavingAiRule(true);
+          await automationAPI.createAIRule({
+            name: defaultName,
+            devices: selectedIds.map((id) => Number(id)),
+            conditions: [],
+            actions: defaultActions,
+            schedule: null,
+          });
+
+          router.replace('/automation');
+        } catch (error) {
+          Alert.alert('Create AI rule failed', error instanceof Error ? error.message : 'Unknown error');
+        } finally {
+          setIsSavingAiRule(false);
+        }
+      };
+
+      void createAiRule();
+      return;
+    }
 
     const nextParams = {
       taskId: params.taskId ?? '',
@@ -236,8 +302,8 @@ export default function AutomationCreateScreen() {
           <Pressable style={styles.clearButton} onPress={clearAll}>
             <Text style={styles.clearText}>Clear all</Text>
           </Pressable>
-          <Pressable style={styles.selectButton} onPress={handleSelect}>
-            <Text style={styles.selectText}>Select</Text>
+          <Pressable style={styles.selectButton} onPress={handleSelect} disabled={isSavingAiRule}>
+            <Text style={styles.selectText}>{isSavingAiRule ? 'Saving...' : 'Select'}</Text>
           </Pressable>
         </View>
       </View>

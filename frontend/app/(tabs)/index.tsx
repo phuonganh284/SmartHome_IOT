@@ -3,7 +3,7 @@ import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useMemo, useState, useSyncExternalStore, useEffect } from 'react';
 import { Alert, Pressable, SafeAreaView, StyleSheet, Text, View } from 'react-native';
 
-import { deviceAPI, notificationAPI, type Device } from '@/services/api';
+import { automationAPI, deviceAPI, notificationAPI, type Device } from '@/services/api';
 import {
   getLightUiState,
   getLightUiStateVersion,
@@ -55,6 +55,8 @@ const isAuthErrorMessage = (message: string) => {
   const lower = message.toLowerCase();
   return lower.includes('no token') || lower.includes('invalid token') || lower.includes('401');
 };
+
+const isAiRuleName = (name?: string | null) => (name || '').trim().toLowerCase().startsWith('ai');
 
 export default function HomeScreen() {
   const [devices, setDevices] = useState<DeviceTile[]>([]);
@@ -174,6 +176,36 @@ export default function HomeScreen() {
     }
 
     const selectedTiles = devices.filter((device) => selectedIds.includes(String(device.id)));
+
+    // Frontend-side cleanup: delete AI rules that target selected devices.
+    const selectedBackendIds = selectedTiles.map((device) => Number(device.backendId)).filter(Number.isFinite);
+    if (selectedBackendIds.length > 0) {
+      try {
+        const rules = await automationAPI.getRules();
+        const aiRuleIds = rules
+          .filter(
+            (rule) =>
+              isAiRuleName(rule.name) &&
+              (rule.devices || []).some((deviceId) => selectedBackendIds.includes(Number(deviceId)))
+          )
+          .map((rule) => String(rule.id));
+
+        if (aiRuleIds.length > 0) {
+          const aiDeleteResults = await Promise.allSettled(aiRuleIds.map((ruleId) => automationAPI.deleteRule(ruleId)));
+          const aiDeleteFailed = aiDeleteResults.some((result) => result.status === 'rejected');
+
+          if (aiDeleteFailed) {
+            setLoadError('Cannot delete related AI rules. Device was not deleted.');
+            return;
+          }
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Cannot load automation rules';
+        setLoadError(isAuthErrorMessage(message) ? '' : message);
+        return;
+      }
+    }
+
     const results = await Promise.allSettled(
       selectedTiles.map((device) => deviceAPI.deleteDevice(device.backendId))
     );
@@ -205,6 +237,32 @@ export default function HomeScreen() {
     });
 
     setDeleteMode(false);
+  };
+
+  const confirmDeleteSelectedDevices = () => {
+    const selectedIds = Object.keys(selectedDevices).filter((id) => selectedDevices[id]);
+    if (selectedIds.length === 0) {
+      setDeleteMode(false);
+      return;
+    }
+
+    Alert.alert(
+      'Delete devices?',
+      'Deleting device will also delete related AI rules. Continue?',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Continue',
+          style: 'destructive',
+          onPress: () => {
+            void deleteSelectedDevices();
+          },
+        },
+      ]
+    );
   };
 
   const selectedCount = useMemo(
@@ -283,7 +341,7 @@ export default function HomeScreen() {
         {deleteMode && (
           <View style={styles.deleteRow}>
             <Text style={styles.deleteCountText}>{selectedCount} selected</Text>
-            <Pressable style={styles.deleteFab} onPress={() => void deleteSelectedDevices()}>
+            <Pressable style={styles.deleteFab} onPress={confirmDeleteSelectedDevices}>
               <Image
                 source={require('@/assets/images/Trash 2.png')}
                 style={styles.deleteFabIcon}

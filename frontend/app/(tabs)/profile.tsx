@@ -118,7 +118,7 @@ export default function ProfileScreen() {
           />
 
           <Text style={styles.fieldLabel}>Password</Text>
-          <TextInput value={password} onChangeText={setPassword} style={styles.fieldInput} editable={!loadingProfile} />
+          <TextInput value={password} onChangeText={setPassword} style={styles.fieldInput} editable={!loadingProfile} secureTextEntry />
 
           <Pressable style={[styles.saveButton, loadingProfile && styles.buttonDisabled]} onPress={handleSave} disabled={loadingProfile}>
             <Text style={styles.saveText}>{loadingProfile ? 'Loading...' : 'Save Profile'}</Text>

@@ -1,7 +1,7 @@
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import { Pressable, SafeAreaView, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { deviceAPI, type DeviceType } from '@/services/api';
 
@@ -44,6 +44,7 @@ const mapTypeToCandidate = (item: DeviceType): DeviceCandidate => ({
 export default function AddDeviceScreen() {
   const [activeCategory, setActiveCategory] = useState<Category>('lighting');
   const [candidates, setCandidates] = useState<DeviceCandidate[]>([]);
+  const [deviceName, setDeviceName] = useState('');
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
 
@@ -98,6 +99,18 @@ export default function AddDeviceScreen() {
           })}
         </ScrollView>
 
+        <View style={styles.nameInputSection}>
+          <Text style={styles.nameInputLabel}>Your device name</Text>
+          <TextInput
+            value={deviceName}
+            onChangeText={setDeviceName}
+            placeholder="Enter your device name"
+            placeholderTextColor="#A0A2A9"
+            style={styles.nameInput}
+            maxLength={50}
+          />
+        </View>
+
         {loading ? (
           <Text style={styles.statusText}>Loading device types...</Text>
         ) : filteredCandidates.length === 0 ? (
@@ -111,7 +124,10 @@ export default function AddDeviceScreen() {
                   onPress={() =>
                     router.push({
                       pathname: '/scan-device',
-                      params: { type: item.type, name: item.name },
+                      params: {
+                        type: item.type,
+                        name: deviceName.trim() || item.name,
+                      },
                     })
                   }>
                   <Image source={item.image} style={styles.deviceImage} contentFit="contain" />
@@ -160,6 +176,26 @@ const styles = StyleSheet.create({
   },
   categoryScroll: {
     marginTop: 20,
+  },
+  nameInputSection: {
+    marginTop: 12,
+  },
+  nameInputLabel: {
+    color: '#404248',
+    fontSize: 13,
+    fontWeight: '600',
+    marginBottom: 6,
+  },
+  nameInput: {
+    height: 44,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#D4D6DC',
+    backgroundColor: '#F6F6F7',
+    paddingHorizontal: 12,
+    color: '#232323',
+    fontSize: 14,
+    fontWeight: '500',
   },
   categoryRow: {
     marginHorizontal: -10,

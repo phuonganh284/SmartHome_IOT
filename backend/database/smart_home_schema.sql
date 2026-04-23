@@ -90,6 +90,7 @@ create table automation_rules (
     user_id uuid references users(id) on delete cascade,
     name varchar(255),
     is_active boolean default true,
+    is_ai boolean default false,
     last_executed timestamp,
     created_at timestamp default now()
 );

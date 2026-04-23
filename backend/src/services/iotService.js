@@ -159,4 +159,3 @@ export const publishCommandForDevice = async ({ device_id, db = supabase, action
 };
 
 export default { publishCommandForDevice };
-//TODO

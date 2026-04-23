@@ -1,6 +1,23 @@
 import * as automationModel from "../models/automationModel.js";
 import supabase from "../services/supabaseClient.js";
 
+// create AI rule (no conditions expected)
+export const createAIRule = async (req, res) => {
+    try {
+        const user_id = req.user.id;
+        const { name, devices, actions, schedule } = req.body;
+        // AI rules should not have conditions
+        // validate devices and ensure same base type
+        await validateDevicesSameType(user_id, devices, req.supabase);
+
+        const rule = await automationModel.createAIRule({ user_id, name, devices, actions, schedule, db: req.supabase });
+        res.status(201).json(rule);
+    } catch (err) {
+        const status = err.status || 500;
+        res.status(status).json({ error: err.message || err });
+    }
+};
+
 // ensure devices belong to user and are same base_type
 const validateDevicesSameType = async (user_id, device_ids, db = supabase) => {
     if (!device_ids || device_ids.length === 0) throw { status: 400, message: "devices required" };
@@ -23,6 +40,18 @@ export const listRules = async (req, res) => {
     try {
         const user_id = req.user.id;
         const rules = await automationModel.getRulesByUser(user_id, req.supabase);
+        res.json(rules);
+    } catch (err) {
+        const status = err.status || 500;
+        res.status(status).json({ error: err.message || err });
+    }
+};
+
+// get only AI rules
+export const getAIRules = async (req, res) => {
+    try {
+        const user_id = req.user.id;
+        const rules = await automationModel.getAIRulesByUser(user_id, req.supabase);
         res.json(rules);
     } catch (err) {
         const status = err.status || 500;
@@ -94,4 +123,46 @@ export const setRuleActive = async (req, res) => {
     }
 };
 
-export default { listRules, createRule, updateRule, deleteRule, setRuleActive };
+// toggle AI rule active/inactive
+export const toggleAIRuleActive = async (req, res) => {
+    try {
+        const user_id = req.user.id;
+        const rule_id = Number(req.params.id);
+        const { is_active } = req.body;
+        if (typeof is_active !== 'boolean') return res.status(400).json({ error: 'is_active must be boolean' });
+
+        // verify rule exists and is AI
+        const { data: row, error: rErr } = await req.supabase.from('automation_rules').select('is_ai, user_id').eq('id', rule_id).limit(1).single();
+        if (rErr) throw rErr;
+        if (!row) return res.status(404).json({ error: 'rule not found' });
+        if (!row.is_ai) return res.status(400).json({ error: 'rule is not an AI rule' });
+
+        const updated = await automationModel.setRuleActive({ rule_id, user_id, is_active, db: req.supabase });
+        res.json({ ok: true, rule: updated });
+    } catch (err) {
+        const status = err.status || 500;
+        res.status(status).json({ error: err.message || err });
+    }
+};
+
+// delete AI rule
+export const deleteAIRule = async (req, res) => {
+    try {
+        const user_id = req.user.id;
+        const rule_id = Number(req.params.id);
+
+        // verify rule exists and is AI
+        const { data: row, error: rErr } = await req.supabase.from('automation_rules').select('is_ai, user_id').eq('id', rule_id).limit(1).single();
+        if (rErr) throw rErr;
+        if (!row) return res.status(404).json({ error: 'rule not found' });
+        if (!row.is_ai) return res.status(400).json({ error: 'rule is not an AI rule' });
+
+        await automationModel.deleteRule({ rule_id, user_id, db: req.supabase });
+        res.json({ ok: true });
+    } catch (err) {
+        const status = err.status || 500;
+        res.status(status).json({ error: err.message || err });
+    }
+};
+
+export default { listRules, getAIRules, createRule, createAIRule, updateRule, deleteRule, setRuleActive, toggleAIRuleActive, deleteAIRule };

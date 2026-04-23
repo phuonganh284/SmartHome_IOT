@@ -61,11 +61,14 @@ export const postSensorReadings = async (req, res) => {
                                 if ((key.includes("light") || key.includes("lux")) && !readingsObj["light"]) {
                                     readingsObj[sensor.sensor_type] = val; used.add(sensor.id); matched = true; break;
                                 }
+                                if ((key.includes("motion") || key.includes("pir")) && !readingsObj["motion"]) {
+                                    readingsObj[sensor.sensor_type] = val; used.add(sensor.id); matched = true; break;
+                                }
                             }
 
                             if (!matched) {
                                 // fallback assign by positional defaults
-                                const defaults = ["temperature", "humidity", "light"];
+                                const defaults = ["temperature", "humidity", "light", "motion"];
                                 const defKey = defaults[i] || `sensor_${i}`;
                                 readingsObj[defKey] = val;
                             }
@@ -102,7 +105,8 @@ export const postSensorReadings = async (req, res) => {
         try {
             sensorService.processReadings({ feed, readings: data, db: supabase }).then(result => {
                 if (result && result.processed) {
-                    console.log(`[sensorController] processed ${result.processed} automation rules`);
+                    const details = result.processed_rules && Array.isArray(result.processed_rules) ? result.processed_rules.map(r => `${r.id}${r.name ? `(${r.name})` : ``}${r.ai ? '[AI]' : ''}`).join(', ') : 'n/a';
+                    console.log(`[sensorController] processed ${result.processed} automation rules - ${details}`);
                 }
             }).catch(e => console.error("[sensorController] sensorService error:", e));
         } catch (e) {

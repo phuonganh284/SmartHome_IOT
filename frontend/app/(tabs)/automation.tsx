@@ -143,6 +143,7 @@ const mapRuleToItem = (rule: AutomationRule, devicesById: DeviceLookup): Automat
 export default function AutomationScreen() {
   const params = useLocalSearchParams<{
     autoCreate?: string | string[];
+    autoCreateAi?: string | string[];
     autoUpdate?: string | string[];
     ruleId?: string | string[];
     ruleName?: string | string[];
@@ -177,6 +178,7 @@ export default function AutomationScreen() {
   const [selectedTasks, setSelectedTasks] = useState<Record<string, boolean>>({});
   const [editMode, setEditMode] = useState(false);
   const processedAutoCreateKeyRef = useRef<string>('');
+  const processedAutoCreateAiKeyRef = useRef<string>('');
   const processedAutoUpdateKeyRef = useRef<string>('');
   const suppressCardPressUntilRef = useRef<Record<string, number>>({});
   const isResolvingConflictRef = useRef(false);
@@ -396,6 +398,90 @@ export default function AutomationScreen() {
     params.humidityComparator,
     params.temperature,
     params.humidity,
+    params.start_time,
+    params.end_time,
+    params.start_date,
+    params.end_date,
+    loadRules,
+  ]);
+
+  useEffect(() => {
+    if (toSingleParam(params.autoCreateAi) !== '1') {
+      return;
+    }
+
+    const selected = toSingleParam(params.selected) || '';
+    const selectedType = toSingleParam(params.selectedType) || toSingleParam(params.category) || '';
+    const startTime = toSingleParam(params.start_time) || '';
+    const endTime = toSingleParam(params.end_time) || '';
+    const startDate = toSingleParam(params.start_date) || '';
+    const endDate = toSingleParam(params.end_date) || '';
+
+    const createAiKey = [selected, selectedType, startTime, endTime, startDate, endDate].join('|');
+    if (!createAiKey || processedAutoCreateAiKeyRef.current === createAiKey) {
+      return;
+    }
+
+    processedAutoCreateAiKeyRef.current = createAiKey;
+
+    const createAiRuleNow = async () => {
+      const selectedDevices = parseSelectedDevices(selected);
+      if (selectedDevices.length === 0) {
+        Alert.alert('Missing devices', 'Please select at least one device before creating AI automation.');
+        return;
+      }
+
+      const aiCategory = getRuleCategoryFromType(selectedType);
+      const defaultActions =
+        aiCategory === 'fan'
+          ? [{ action: 'speed', value: null }]
+          : [{ action: 'power', value: null }];
+
+      try {
+        setIsAutoCreating(true);
+
+        const allDevices = await deviceAPI.getDevices();
+        const firstSelectedDevice = allDevices.find((device) => device.id === selectedDevices[0]);
+        const firstDeviceName = firstSelectedDevice?.name?.trim() || `Device ${selectedDevices[0]}`;
+        const defaultName = `AI rule - ${firstDeviceName}`;
+
+        await automationAPI.createAIRule({
+          name: defaultName,
+          devices: selectedDevices,
+          conditions: [],
+          actions: defaultActions,
+          schedule: {
+            start_time: startTime || null,
+            end_time: endTime || null,
+            start_date: startDate || null,
+            end_date: endDate || null,
+          },
+        });
+
+        await loadRules();
+        router.setParams({
+          autoCreateAi: undefined,
+          selected: undefined,
+          selectedType: undefined,
+          category: undefined,
+          start_time: undefined,
+          end_time: undefined,
+          start_date: undefined,
+          end_date: undefined,
+        });
+      } catch (error) {
+        Alert.alert('Create AI automation failed', error instanceof Error ? error.message : 'Unknown error');
+      } finally {
+        setIsAutoCreating(false);
+      }
+    };
+
+    void createAiRuleNow();
+  }, [
+    params.autoCreateAi,
+    params.selected,
+    params.selectedType,
+    params.category,
     params.start_time,
     params.end_time,
     params.start_date,

@@ -64,7 +64,6 @@ export default function AutomationCreateScreen() {
   const [activeCategory, setActiveCategory] = useState<Category>('fan');
   const [selectedMap, setSelectedMap] = useState<Record<string, boolean>>({});
   const [candidates, setCandidates] = useState<DeviceCandidate[]>([]);
-  const [isSavingAiRule, setIsSavingAiRule] = useState(false);
 
   const isAiMode = params.aiMode === '1';
 
@@ -178,36 +177,15 @@ export default function AutomationCreateScreen() {
     const category = firstSelected?.category ?? activeCategory;
 
     if (isAiMode) {
-      const defaultActions =
-        category === 'fan'
-          ? [{ action: 'speed', value: null }]
-          : [{ action: 'power', value: null }];
-
-      const defaultName =
-        selectedIds.length === 1
-          ? `AI rule - ${firstSelected?.name || `Device ${selectedIds[0]}`}`
-          : `AI ${category === 'fan' ? 'fan' : 'light'} rule (${selectedIds.length} devices)`;
-
-      const createAiRule = async () => {
-        try {
-          setIsSavingAiRule(true);
-          await automationAPI.createAIRule({
-            name: defaultName,
-            devices: selectedIds.map((id) => Number(id)),
-            conditions: [],
-            actions: defaultActions,
-            schedule: null,
-          });
-
-          router.replace('/automation');
-        } catch (error) {
-          Alert.alert('Create AI rule failed', error instanceof Error ? error.message : 'Unknown error');
-        } finally {
-          setIsSavingAiRule(false);
-        }
-      };
-
-      void createAiRule();
+      router.push({
+        pathname: '/automation-schedule',
+        params: {
+          aiMode: '1',
+          category,
+          selected: selectedIds.join(','),
+          selectedType: firstSelected?.type || '',
+        },
+      });
       return;
     }
 
@@ -302,8 +280,8 @@ export default function AutomationCreateScreen() {
           <Pressable style={styles.clearButton} onPress={clearAll}>
             <Text style={styles.clearText}>Clear all</Text>
           </Pressable>
-          <Pressable style={styles.selectButton} onPress={handleSelect} disabled={isSavingAiRule}>
-            <Text style={styles.selectText}>{isSavingAiRule ? 'Saving...' : 'Select'}</Text>
+          <Pressable style={styles.selectButton} onPress={handleSelect}>
+            <Text style={styles.selectText}>Select</Text>
           </Pressable>
         </View>
       </View>

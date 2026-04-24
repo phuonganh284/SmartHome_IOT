@@ -78,6 +78,7 @@ const isValidMeridiem = (value: string) => {
 
 export default function AutomationScheduleScreen() {
   const params = useLocalSearchParams<{
+    aiMode?: string;
     taskId?: string;
     taskName?: string;
     action?: string;
@@ -227,6 +228,23 @@ export default function AutomationScheduleScreen() {
 
     if (!isValidMeridiem(onMeridiem) || !isValidMeridiem(offMeridiem)) {
       Alert.alert('Invalid period', 'Please use AM or PM.');
+      return;
+    }
+
+    if (params.aiMode === '1') {
+      router.replace({
+        pathname: '/automation',
+        params: {
+          autoCreateAi: '1',
+          category: params.category ?? '',
+          selected: params.selected ?? '',
+          selectedType: params.selectedType ?? '',
+          start_time: to24Hour(onTime, onMeridiem),
+          end_time: to24Hour(offTime, offMeridiem),
+          start_date: formatDate(rangeStart),
+          end_date: formatDate(rangeEnd ?? rangeStart),
+        },
+      });
       return;
     }
 
